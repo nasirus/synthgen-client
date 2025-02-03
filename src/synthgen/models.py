@@ -3,25 +3,29 @@ from typing import Optional, List, Dict, Any
 from enum import Enum
 from pydantic import BaseModel
 
+
 class TaskStatus(str, Enum):
     PENDING = "PENDING"
     PROCESSING = "PROCESSING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
 
+
 class Message(BaseModel):
     role: str
     content: str
+
 
 class TaskRequest(BaseModel):
     model: str
     messages: List[Message]
 
-class Task(BaseModel):
+
+class TaskResponse(BaseModel):
     message_id: str
     batch_id: Optional[str] = None
     status: TaskStatus
-    payload: Optional[Dict[str, Any]] = None
+    body: Optional[Dict[str, Any]] = None
     result: Optional[Dict[str, Any]] = None
     prompt_tokens: Optional[int] = None
     completion_tokens: Optional[int] = None
@@ -36,6 +40,7 @@ class Task(BaseModel):
     class Config:
         from_attributes = True
 
+
 class Batch(BaseModel):
     batch_id: str
     batch_status: TaskStatus
@@ -43,6 +48,7 @@ class Batch(BaseModel):
     completed_tasks: int
     failed_tasks: int
     pending_tasks: int
+    processing_tasks: int
     cached_tasks: int
     created_at: datetime
     started_at: Optional[datetime] = None
@@ -55,6 +61,7 @@ class Batch(BaseModel):
     class Config:
         from_attributes = True
 
+
 class BatchList(BaseModel):
     total: int
     page: int
@@ -64,19 +71,21 @@ class BatchList(BaseModel):
     class Config:
         from_attributes = True
 
+
 class TaskList(BaseModel):
     total: int
     page: int
     page_size: int
-    tasks: List[Task]
-
+    tasks: List[TaskResponse]
 
     class Config:
         from_attributes = True
 
+
 class HealthStatus(str, Enum):
     HEALTHY = "healthy"
     UNHEALTHY = "unhealthy"
+
 
 class ServiceStatus(BaseModel):
     api: HealthStatus = HealthStatus.HEALTHY
@@ -85,7 +94,31 @@ class ServiceStatus(BaseModel):
     queue_consumers: int = 0
     queue_messages: int = 0
 
+
 class HealthResponse(BaseModel):
     status: HealthStatus
     services: ServiceStatus
-    error: Optional[str] = None 
+    error: Optional[str] = None
+
+
+class TaskSubmission(BaseModel):
+    """Model for individual task submission in bulk operations"""
+
+    custom_id: str
+    method: str
+    url: str
+    api_key: Optional[str] = None
+    body: Dict[str, Any]
+
+
+class TaskListSubmission(BaseModel):
+    """Model for bulk task submission"""
+
+    tasks: List[TaskSubmission]
+
+
+class BulkTaskResponse(BaseModel):
+    """Response model for bulk task submission"""
+
+    batch_id: str
+    rows: int

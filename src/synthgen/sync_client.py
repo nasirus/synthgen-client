@@ -3,13 +3,14 @@ import json
 from typing import Optional, Dict, Any, List, Union, BinaryIO
 from pathlib import Path
 from .models import (
-    Task,
+    TaskResponse,
     Batch,
     BatchList,
     TaskList,
     TaskRequest,
-    Message,
     HealthResponse,
+    BulkTaskResponse,
+    TaskListSubmission,
 )
 from .exceptions import APIError
 
@@ -54,17 +55,12 @@ class SynthgenClient:
         except Exception as e:
             raise APIError(str(e))
 
-    def create_task(self, model: str, messages: List[Dict[str, str]]) -> str:
+    def create_task(self, task: TaskRequest) -> str:
         """Create a new task"""
-        task_request = TaskRequest(
-            model=model, messages=[Message(**msg) for msg in messages]
-        )
-        response = self._request(
-            "POST", "/api/v1/tasks", json=task_request.model_dump()
-        )
+        response = self._request("POST", "/api/v1/tasks", json=task.model_dump())
         return response["message_id"]
 
-    def get_task(self, message_id: str) -> Task:
+    def get_task(self, message_id: str) -> TaskResponse:
         """Get task status and result"""
         response = self._request("GET", f"/api/v1/tasks/{message_id}")
 
@@ -74,7 +70,7 @@ class SynthgenClient:
         if isinstance(response["result"], str):
             response["result"] = json.loads(response["result"].replace("'", '"'))
 
-        return Task.model_validate(response)
+        return TaskResponse.model_validate(response)
 
     def delete_task(self, message_id: str) -> None:
         """Delete a task"""
@@ -95,12 +91,38 @@ class SynthgenClient:
         response = self._request("GET", f"/api/v1/batches/{batch_id}")
         return Batch.model_validate(response)
 
-    def list_batches(self, page: int = 1, page_size: int = 50) -> BatchList:
+    def get_batches(self, page: int = 1, page_size: int = 50) -> BatchList:
         """List all batches"""
         response = self._request(
             "GET", "/api/v1/batches", params={"page": page, "page_size": page_size}
         )
         return BatchList.model_validate(response)
+
+    def get_batches_all(self, page_size: int = 50) -> List[Batch]:
+        """List all batches with automatic pagination
+
+        Args:
+            page_size: Number of items per page (default: 50)
+
+        Returns:
+            BatchList containing all batches across all pages
+        """
+        all_batches = []
+        page = 1
+
+        while True:
+            response = self._request(
+                "GET", "/api/v1/batches", params={"page": page, "page_size": page_size}
+            )
+            batch_list = BatchList.model_validate(response)
+
+            if not batch_list.batches:
+                break
+
+            all_batches.extend(batch_list.batches)
+            page += 1
+
+        return all_batches
 
     def get_batch_tasks(
         self, batch_id: str, page: int = 1, page_size: int = 50
@@ -113,6 +135,25 @@ class SynthgenClient:
         )
         return TaskList.model_validate(response)
 
+    def get_batch_tasks_all(
+        self, batch_id: str, page_size: int = 50
+    ) -> List[TaskResponse]:
+        """Get all tasks in a batch with automatic pagination"""
+        all_tasks = []
+        page = 1
+        while True:
+            response = self._request(
+                "GET",
+                f"/api/v1/batches/{batch_id}/tasks",
+                params={"page": page, "page_size": page_size},
+            )
+            task_list = TaskList.model_validate(response)
+            if not task_list.tasks:
+                break
+            all_tasks.extend(task_list.tasks)
+            page += 1
+        return all_tasks
+
     def delete_batch(self, batch_id: str) -> None:
         """Delete a batch"""
         self._request("DELETE", f"/batches/{batch_id}")
@@ -121,3 +162,39 @@ class SynthgenClient:
         """Check system health status"""
         response = self._request("GET", "/health")
         return HealthResponse.model_validate(response)
+
+    def create_batch_json(self, tasks: TaskListSubmission) -> BulkTaskResponse:
+        """
+        Submit bulk tasks using a JSON payload instead of a file.
+
+        Args:
+            tasks: TaskListSubmission object containing a list of TaskSubmission objects
+                  Each TaskSubmission contains:
+                  - custom_id: Unique identifier for the task
+                  - method: HTTP method
+                  - url: Target URL
+                  - api_key: Optional API key
+                  - body: Request body as dictionary
+
+        Returns:
+            A dictionary representing the BulkTaskResponse with keys:
+                - batch_id: Identifier for the created batch
+                - rows: Count of tasks submitted
+
+        Raises:
+            APIError: If an error occurs during JSON conversion or during the API request
+        """
+        try:
+            # Convert the TaskListSubmission to a JSON string
+            json_payload = tasks.model_dump_json()
+        except Exception as e:
+            raise APIError(f"Error converting tasks to JSON string: {e}")
+
+        # Prepare headers by including the appropriate Content-Type
+        headers = self._get_headers()
+        headers["Content-Type"] = "application/json"
+
+        response = self._request(
+            "POST", "/api/v1/batches/json", content=json_payload, headers=headers
+        )
+        return BulkTaskResponse.model_validate(response)

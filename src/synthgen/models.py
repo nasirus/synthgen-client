@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 from enum import Enum
 from pydantic import BaseModel
 
@@ -25,8 +25,8 @@ class TaskResponse(BaseModel):
     message_id: str
     batch_id: Optional[str] = None
     status: TaskStatus
-    body: Optional[Dict[str, Any]] = None
-    result: Optional[Dict[str, Any]] = None
+    body: Optional[dict] = None
+    result: Optional[dict] = None
     prompt_tokens: Optional[int] = None
     completion_tokens: Optional[int] = None
     total_tokens: Optional[int] = None
@@ -36,6 +36,8 @@ class TaskResponse(BaseModel):
     completed_at: Optional[datetime] = None
     duration: Optional[int] = None
     queue_position: Optional[int] = None
+    dataset: Optional[str] = None
+    source: Optional[dict] = None
 
     class Config:
         from_attributes = True
@@ -108,7 +110,9 @@ class TaskSubmission(BaseModel):
     method: str
     url: str
     api_key: Optional[str] = None
-    body: Dict[str, Any]
+    body: dict
+    dataset: Optional[str] = None
+    source: Optional[dict] = None
 
 
 class TaskListSubmission(BaseModel):

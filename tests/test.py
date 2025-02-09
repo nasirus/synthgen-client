@@ -14,7 +14,7 @@ dataset_name = "nvidia/AceMath-Instruct-Training-Data"
 dataset = load_dataset(dataset_name)
 
 # Convert to list or iterate properly
-data = list(dataset["math_sft"].select(range(10000)))  # Convert to list first
+data = list(dataset["math_sft"].select(range(1)))  # Convert to list first
 
 print("Creating tasks...")
 tasks = TaskListSubmission(

@@ -13,6 +13,7 @@ from .models import (
 )
 from .exceptions import APIError
 import logging
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +178,7 @@ class SynthgenClient:
         Args:
             tasks: TaskListSubmission object containing a list of TaskSubmission objects
                   Each TaskSubmission contains task details like custom_id, method, url, etc.
+            batch_id: Optional custom batch ID. If not provided, the server will generate one.
 
         Returns:
             BulkTaskResponse containing the batch_id and number of rows processed
@@ -185,11 +187,16 @@ class SynthgenClient:
             APIError: If an error occurs during conversion or API request
         """
         try:
+            batch_id = str(uuid.uuid4())
             # Convert tasks to JSONL format
             jsonl_content = []
             for task in tasks.tasks:
+
                 jsonl_content.append(task.model_dump_json())
             jsonl_data = "\n".join(jsonl_content)
+
+            # Add batch_id
+            params = {"batch_id": batch_id}
 
             # Create in-memory file-like object
             from io import BytesIO
@@ -197,7 +204,9 @@ class SynthgenClient:
             file_obj = BytesIO(jsonl_data.encode("utf-8"))
             files = {"file": ("batch.jsonl", file_obj, "application/x-jsonlines")}
 
-            response = self._request("POST", "/api/v1/batches", files=files)
+            response = self._request(
+                "POST", "/api/v1/batches", files=files, params=params
+            )
             return BulkTaskResponse.model_validate(response)
 
         except Exception as e:

@@ -125,4 +125,4 @@ class BulkTaskResponse(BaseModel):
     """Response model for bulk task submission"""
 
     batch_id: str
-    rows: int
+    total_tasks: int

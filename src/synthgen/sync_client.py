@@ -1,7 +1,6 @@
 import httpx
 import json
-from typing import Optional, Dict, Any, List, Union, BinaryIO
-from pathlib import Path
+from typing import Optional, Dict, Any, List
 from .models import (
     TaskResponse,
     Batch,
@@ -13,9 +12,13 @@ from .models import (
     TaskListSubmission,
 )
 from .exceptions import APIError
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class SynthgenClient:
+
     def __init__(
         self, base_url: str, api_key: Optional[str] = None, timeout: int = 300
     ):
@@ -50,11 +53,16 @@ class SynthgenClient:
 
         for attempt in range(max_retries):
             try:
-                response = self._client.request(method, url, timeout=self.timeout, **kwargs)
+                response = self._client.request(
+                    method, url, timeout=self.timeout, **kwargs
+                )
                 response.raise_for_status()
                 return response.json() if response.content else None
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 404 and attempt < max_retries - 1:
+                    logger.warning(
+                        f"404 error,attempt {attempt+1} of {max_retries}, retrying in {retry_delay} seconds"
+                    )
                     import time
 
                     time.sleep(retry_delay)
@@ -85,16 +93,6 @@ class SynthgenClient:
     def delete_task(self, message_id: str) -> None:
         """Delete a task"""
         self._request("DELETE", f"/api/v1/tasks/{message_id}")
-
-    def create_batch(self, file_path: Union[str, Path, BinaryIO]) -> Dict[str, Any]:
-        """Create a new batch from a JSONL file"""
-        if isinstance(file_path, (str, Path)):
-            files = {"file": open(file_path, "rb")}
-        else:
-            files = {"file": file_path}
-
-        response = self._request("POST", "/api/v1/batches", files=files)
-        return response
 
     def get_batch(self, batch_id: str) -> Batch:
         """Get batch status"""
@@ -173,45 +171,41 @@ class SynthgenClient:
         response = self._request("GET", "/health")
         return HealthResponse.model_validate(response)
 
-    def create_batch_json(self, tasks: TaskListSubmission) -> BulkTaskResponse:
-        """
-        Submit bulk tasks using a JSON payload instead of a file.
+    def create_batch(self, tasks: TaskListSubmission) -> BulkTaskResponse:
+        """Create a new batch from TaskListSubmission
 
         Args:
             tasks: TaskListSubmission object containing a list of TaskSubmission objects
-                  Each TaskSubmission contains:
-                  - custom_id: Unique identifier for the task
-                  - method: HTTP method
-                  - url: Target URL
-                  - api_key: Optional API key
-                  - body: Request body as dictionary
+                  Each TaskSubmission contains task details like custom_id, method, url, etc.
 
         Returns:
-            A dictionary representing the BulkTaskResponse with keys:
-                - batch_id: Identifier for the created batch
-                - rows: Count of tasks submitted
+            BulkTaskResponse containing the batch_id and number of rows processed
 
         Raises:
-            APIError: If an error occurs during JSON conversion or during the API request
+            APIError: If an error occurs during conversion or API request
         """
         try:
-            # Convert the TaskListSubmission to a JSON string
-            json_payload = tasks.model_dump_json()
+            # Convert tasks to JSONL format
+            jsonl_content = []
+            for task in tasks.tasks:
+                jsonl_content.append(task.model_dump_json())
+            jsonl_data = "\n".join(jsonl_content)
+
+            # Create in-memory file-like object
+            from io import BytesIO
+
+            file_obj = BytesIO(jsonl_data.encode("utf-8"))
+            files = {"file": ("batch.jsonl", file_obj, "application/x-jsonlines")}
+
+            response = self._request("POST", "/api/v1/batches", files=files)
+            return BulkTaskResponse.model_validate(response)
+
         except Exception as e:
-            raise APIError(f"Error converting tasks to JSON string: {e}")
-
-        # Prepare headers by including the appropriate Content-Type
-        headers = self._get_headers()
-        headers["Content-Type"] = "application/json"
-
-        response = self._request(
-            "POST", "/api/v1/batches/json", content=json_payload, headers=headers
-        )
-        return BulkTaskResponse.model_validate(response)
+            raise APIError(f"Error creating batch: {e}")
 
     def monitor_batch(
-        self, 
-        tasks: Optional[TaskListSubmission] = None, 
+        self,
+        tasks: Optional[TaskListSubmission] = None,
         batch_id: Optional[str] = None,
         cost_by_1m_input_token: float = 0.0,  # Cost per 1M input tokens
         cost_by_1m_output_token: float = 0.0,  # Cost per 1M output tokens
@@ -274,17 +268,18 @@ class SynthgenClient:
         if batch_id is None:
             if tasks is None:
                 raise ValueError("Either tasks or batch_id must be provided")
-                
+
             console.print("\n[bold yellow]Submitting batch tasks...[/bold yellow]")
-            bulk_response = self.create_batch_json(tasks)
+            bulk_response = self.create_batch(tasks)
             batch_id = bulk_response.batch_id
-            total_tasks = bulk_response.rows
+            total_tasks = bulk_response.total_tasks
             console.print(
                 f"Batch submitted with ID: [bold cyan]{batch_id}[/bold cyan] containing "
-                f"[bold magenta]{total_tasks} task(s)[/bold magenta].\n"
             )
         else:
-            console.print(f"\n[bold yellow]Monitoring existing batch: {batch_id}[/bold yellow]")
+            console.print(
+                f"\n[bold yellow]Monitoring existing batch: {batch_id}[/bold yellow]"
+            )
             batch = self.get_batch(batch_id)
             total_tasks = batch.total_tasks
 

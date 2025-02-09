@@ -14,7 +14,7 @@ dataset_name = "nvidia/AceMath-Instruct-Training-Data"
 dataset = load_dataset(dataset_name)
 
 # Convert to list or iterate properly
-data = list(dataset["math_sft"].select(range(100000)))  # Convert to list first
+data = list(dataset["math_sft"].select(range(10000)))  # Convert to list first
 
 print("Creating tasks...")
 tasks = TaskListSubmission(
@@ -44,25 +44,26 @@ tasks = TaskListSubmission(
     ]
 )
 
-print("Monitoring batch...")
+
 batch = client.monitor_batch(
     tasks=tasks,
     cost_by_1m_input_token=0.005,
     cost_by_1m_output_token=0.01,
 )
 
-print("Converting batch results to a list of dictionaries...")
-# Convert batch results to a list of dictionaries
-batch_data = [item.model_dump() for item in batch]
 
-print("Saving to parquet...")
-# Save to parquet using pandas
+# print("Converting batch results to a list of dictionaries...")
+# # Convert batch results to a list of dictionaries
+# batch_data = [item.model_dump() for item in batch]
 
-df = pd.DataFrame(batch_data)
-df.to_parquet("batch_results.parquet")
+# print("Saving to parquet...")
+# # Save to parquet using pandas
 
-print("Loading and displaying the saved parquet file...")
-# Load and display the saved parquet file
-loaded_df = pd.read_parquet("batch_results.parquet")
-print("\nFirst 3 rows of loaded parquet file:")
-print(loaded_df.head(3))
+# df = pd.DataFrame(batch_data)
+# df.to_parquet("batch_results.parquet")
+
+# print("Loading and displaying the saved parquet file...")
+# # Load and display the saved parquet file
+# loaded_df = pd.read_parquet("batch_results.parquet")
+# print("\nFirst 3 rows of loaded parquet file:")
+# print(loaded_df.head(3))

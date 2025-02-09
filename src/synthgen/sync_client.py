@@ -172,13 +172,14 @@ class SynthgenClient:
         response = self._request("GET", "/health")
         return HealthResponse.model_validate(response)
 
-    def create_batch(self, tasks: TaskListSubmission) -> BulkTaskResponse:
-        """Create a new batch from TaskListSubmission
+    def create_batch(
+        self, tasks: TaskListSubmission, chunk_size: int = 1000
+    ) -> BulkTaskResponse:
+        """Create a new batch from TaskListSubmission with chunking logic
 
         Args:
             tasks: TaskListSubmission object containing a list of TaskSubmission objects
                   Each TaskSubmission contains task details like custom_id, method, url, etc.
-            batch_id: Optional custom batch ID. If not provided, the server will generate one.
 
         Returns:
             BulkTaskResponse containing the batch_id and number of rows processed
@@ -188,26 +189,39 @@ class SynthgenClient:
         """
         try:
             batch_id = str(uuid.uuid4())
-            # Convert tasks to JSONL format
-            jsonl_content = []
-            for task in tasks.tasks:
+            total_processed = 0
 
-                jsonl_content.append(task.model_dump_json())
-            jsonl_data = "\n".join(jsonl_content)
+            # Process tasks in chunks
+            for i in range(0, len(tasks.tasks), chunk_size):
+                chunk = tasks.tasks[i : i + chunk_size]
 
-            # Add batch_id
-            params = {"batch_id": batch_id}
+                # Convert chunk to JSONL format
+                jsonl_content = []
+                for task in chunk:
+                    jsonl_content.append(task.model_dump_json())
+                jsonl_data = "\n".join(jsonl_content)
 
-            # Create in-memory file-like object
-            from io import BytesIO
+                # Add batch_id
+                params = {"batch_id": batch_id}
 
-            file_obj = BytesIO(jsonl_data.encode("utf-8"))
-            files = {"file": ("batch.jsonl", file_obj, "application/x-jsonlines")}
+                # Create in-memory file-like object
+                from io import BytesIO
 
-            response = self._request(
-                "POST", "/api/v1/batches", files=files, params=params
-            )
-            return BulkTaskResponse.model_validate(response)
+                file_obj = BytesIO(jsonl_data.encode("utf-8"))
+                files = {"file": ("batch.jsonl", file_obj, "application/x-jsonlines")}
+
+                response = self._request(
+                    "POST", "/api/v1/batches", files=files, params=params
+                )
+                chunk_response = BulkTaskResponse.model_validate(response)
+                total_processed += chunk_response.total_tasks
+
+                logger.info(
+                    f"Processed chunk of {len(chunk)} tasks (total: {total_processed})"
+                )
+
+            # Return the final response with total processed tasks
+            return BulkTaskResponse(batch_id=batch_id, total_tasks=total_processed)
 
         except Exception as e:
             raise APIError(f"Error creating batch: {e}")

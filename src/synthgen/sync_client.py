@@ -14,7 +14,13 @@ from .models import (
 from .exceptions import APIError
 import logging
 import uuid
+from io import BytesIO
+import time
 
+# Configure logging at the top of the file
+logging.basicConfig(
+    level=logging.ERROR, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -23,10 +29,12 @@ class SynthgenClient:
     def __init__(
         self, base_url: str, api_key: Optional[str] = None, timeout: int = 300
     ):
+        logger.debug(f"Initializing SynthgenClient with base_url: {base_url}")
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.timeout = timeout
         self._client = httpx.Client(timeout=timeout, headers=self._get_headers())
+        logger.debug("SynthgenClient initialized successfully")
 
     def _get_headers(self) -> Dict[str, str]:
         headers = {
@@ -47,10 +55,10 @@ class SynthgenClient:
         self.close()
 
     def _request(self, method: str, path: str, **kwargs) -> Any:
-        """Make an HTTP request to the API with retry logic for 404 errors"""
+        """Make an HTTP request to the API with robust retry logic that adds a delay upon each exception."""
         url = f"{self.base_url}{path}"
         max_retries = 10
-        retry_delay = 5  # seconds
+        base_delay = 5  # base delay in seconds
 
         for attempt in range(max_retries):
             try:
@@ -60,18 +68,24 @@ class SynthgenClient:
                 response.raise_for_status()
                 return response.json() if response.content else None
             except httpx.HTTPStatusError as e:
-                if e.response.status_code == 404 and attempt < max_retries - 1:
+                if attempt < max_retries - 1:
                     logger.warning(
-                        f"404 error,attempt {attempt+1} of {max_retries}, retrying in {retry_delay} seconds"
+                        f"HTTPStatusError {e.response.status_code} encountered on attempt {attempt + 1} of {max_retries}. "
+                        f"Retrying in {base_delay} seconds..."
                     )
-                    import time
-
-                    time.sleep(retry_delay)
+                    time.sleep(base_delay)
                     continue
                 raise APIError(
                     str(e), status_code=e.response.status_code, response=e.response
                 )
             except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.warning(
+                        f"Exception '{str(e)}' encountered on attempt {attempt + 1} of {max_retries}. "
+                        f"Retrying in {base_delay} seconds..."
+                    )
+                    time.sleep(base_delay)
+                    continue
                 raise APIError(str(e))
 
     def create_task(self, task: TaskRequest) -> str:
@@ -82,12 +96,6 @@ class SynthgenClient:
     def get_task(self, message_id: str) -> TaskResponse:
         """Get task status and result"""
         response = self._request("GET", f"/api/v1/tasks/{message_id}")
-
-        # Parse the payload and result strings into dictionaries
-        if isinstance(response["payload"], str):
-            response["payload"] = json.loads(response["payload"].replace("'", '"'))
-        if isinstance(response["result"], str):
-            response["result"] = json.loads(response["result"].replace("'", '"'))
 
         return TaskResponse.model_validate(response)
 
@@ -100,68 +108,18 @@ class SynthgenClient:
         response = self._request("GET", f"/api/v1/batches/{batch_id}")
         return Batch.model_validate(response)
 
-    def get_batches(self, page: int = 1, page_size: int = 50) -> BatchList:
+    def get_batches(self) -> BatchList:
         """List all batches"""
-        response = self._request(
-            "GET", "/api/v1/batches", params={"page": page, "page_size": page_size}
-        )
+        response = self._request("GET", "/api/v1/batches")
         return BatchList.model_validate(response)
 
-    def get_batches_all(self, page_size: int = 50) -> List[Batch]:
-        """List all batches with automatic pagination
-
-        Args:
-            page_size: Number of items per page (default: 50)
-
-        Returns:
-            BatchList containing all batches across all pages
-        """
-        all_batches = []
-        page = 1
-
-        while True:
-            response = self._request(
-                "GET", "/api/v1/batches", params={"page": page, "page_size": page_size}
-            )
-            batch_list = BatchList.model_validate(response)
-
-            if not batch_list.batches:
-                break
-
-            all_batches.extend(batch_list.batches)
-            page += 1
-
-        return all_batches
-
-    def get_batch_tasks(
-        self, batch_id: str, page: int = 1, page_size: int = 50
-    ) -> TaskList:
+    def get_batch_tasks(self, batch_id: str) -> TaskList:
         """Get tasks in a batch"""
         response = self._request(
             "GET",
             f"/api/v1/batches/{batch_id}/tasks",
-            params={"page": page, "page_size": page_size},
         )
         return TaskList.model_validate(response)
-
-    def get_batch_tasks_all(
-        self, batch_id: str, page_size: int = 50
-    ) -> List[TaskResponse]:
-        """Get all tasks in a batch with automatic pagination"""
-        all_tasks = []
-        page = 1
-        while True:
-            response = self._request(
-                "GET",
-                f"/api/v1/batches/{batch_id}/tasks",
-                params={"page": page, "page_size": page_size},
-            )
-            task_list = TaskList.model_validate(response)
-            if not task_list.tasks:
-                break
-            all_tasks.extend(task_list.tasks)
-            page += 1
-        return all_tasks
 
     def delete_batch(self, batch_id: str) -> None:
         """Delete a batch"""
@@ -180,6 +138,7 @@ class SynthgenClient:
         Args:
             tasks: TaskListSubmission object containing a list of TaskSubmission objects
                   Each TaskSubmission contains task details like custom_id, method, url, etc.
+            chunk_size: Number of tasks to process in each chunk (default: 1000)
 
         Returns:
             BulkTaskResponse containing the batch_id and number of rows processed
@@ -188,42 +147,106 @@ class SynthgenClient:
             APIError: If an error occurs during conversion or API request
         """
         try:
+            logger.debug(f"Starting create_batch with {len(tasks.tasks)} tasks")
+            logger.debug(f"Chunk size: {chunk_size}")
+
+            from rich.progress import (
+                Progress,
+                SpinnerColumn,
+                BarColumn,
+                TextColumn,
+                TaskProgressColumn,
+            )
+            from rich.console import Console
+            from rich.panel import Panel
+            from rich.live import Live
+
+            console = Console()
             batch_id = str(uuid.uuid4())
+            logger.debug(f"Generated batch_id: {batch_id}")
+
+            total_chunks = (len(tasks.tasks) + chunk_size - 1) // chunk_size
+            logger.debug(f"Will process {total_chunks} chunks")
+
             total_processed = 0
 
-            # Process tasks in chunks
-            for i in range(0, len(tasks.tasks), chunk_size):
-                chunk = tasks.tasks[i : i + chunk_size]
+            # Create progress display
+            progress = Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+            )
+            upload_task = progress.add_task(
+                "[cyan]Uploading chunks...", total=total_chunks
+            )
 
-                # Convert chunk to JSONL format
-                jsonl_content = []
-                for task in chunk:
-                    jsonl_content.append(task.model_dump_json())
-                jsonl_data = "\n".join(jsonl_content)
+            # Use Live display with Panel
+            with Live(
+                Panel(progress, title="Batch Upload Progress", border_style="blue"),
+                console=console,
+                refresh_per_second=4,
+            ):
+                # Process tasks in chunks
+                for chunk_index, i in enumerate(
+                    range(0, len(tasks.tasks), chunk_size), 1
+                ):
+                    progress.update(
+                        upload_task,
+                        description=f"[cyan]Uploading chunk {chunk_index}/{total_chunks}",
+                        advance=1,
+                    )
 
-                # Add batch_id
-                params = {"batch_id": batch_id}
+                    chunk_start = i
+                    chunk_end = i + chunk_size
+                    logger.debug(
+                        f"Processing chunk {chunk_index}/{total_chunks} (indexes {chunk_start}:{chunk_end})"
+                    )
 
-                # Create in-memory file-like object
-                from io import BytesIO
+                    # Create chunk
+                    chunk = TaskListSubmission(tasks=tasks.tasks[chunk_start:chunk_end])
+                    logger.debug(f"Created chunk with {len(chunk.tasks)} tasks")
 
-                file_obj = BytesIO(jsonl_data.encode("utf-8"))
-                files = {"file": ("batch.jsonl", file_obj, "application/x-jsonlines")}
+                    # Convert to JSONL
+                    jsonl_content = []
+                    for task in chunk.tasks:
+                        jsonl_content.append(task.model_dump_json())
+                    jsonl_data = "\n".join(jsonl_content)
+                    logger.debug(f"JSONL data created, size: {len(jsonl_data)} bytes")
 
-                response = self._request(
-                    "POST", "/api/v1/batches", files=files, params=params
-                )
-                chunk_response = BulkTaskResponse.model_validate(response)
-                total_processed += chunk_response.total_tasks
+                    # Prepare request
+                    params = {"batch_id": batch_id}
+                    file_obj = BytesIO(jsonl_data.encode("utf-8"))
+                    files = {
+                        "file": ("batch.jsonl", file_obj, "application/x-jsonlines")
+                    }
 
-                logger.info(
-                    f"Processed chunk of {len(chunk)} tasks (total: {total_processed})"
-                )
+                    # Send request
+                    logger.debug(f"Sending chunk {chunk_index} to API")
+                    try:
+                        response = self._request(
+                            "POST", "/api/v1/batches", files=files, params=params
+                        )
+                        logger.debug(f"API response received for chunk {chunk_index}")
 
-            # Return the final response with total processed tasks
+                        chunk_response = BulkTaskResponse.model_validate(response)
+                        total_processed += chunk_response.total_tasks
+                        logger.debug(
+                            f"Chunk {chunk_index} processed successfully. Total processed: {total_processed}"
+                        )
+
+                    except Exception as chunk_error:
+                        logger.error(
+                            f"Error processing chunk {chunk_index}: {str(chunk_error)}",
+                            exc_info=True,
+                        )
+                        raise
+
+            logger.debug(f"All chunks completed. Total processed: {total_processed}")
             return BulkTaskResponse(batch_id=batch_id, total_tasks=total_processed)
 
         except Exception as e:
+            logger.error(f"Error in create_batch: {str(e)}", exc_info=True)
             raise APIError(f"Error creating batch: {e}")
 
     def monitor_batch(
@@ -232,7 +255,7 @@ class SynthgenClient:
         batch_id: Optional[str] = None,
         cost_by_1m_input_token: float = 0.0,  # Cost per 1M input tokens
         cost_by_1m_output_token: float = 0.0,  # Cost per 1M output tokens
-    ) -> List[TaskResponse]:
+    ) -> TaskList:
         """
         Run an interactive dashboard that monitors batch task processing.
 
@@ -292,13 +315,9 @@ class SynthgenClient:
             if tasks is None:
                 raise ValueError("Either tasks or batch_id must be provided")
 
-            console.print("\n[bold yellow]Submitting batch tasks...[/bold yellow]")
             bulk_response = self.create_batch(tasks)
             batch_id = bulk_response.batch_id
             total_tasks = bulk_response.total_tasks
-            console.print(
-                f"Batch submitted with ID: [bold cyan]{batch_id}[/bold cyan] containing "
-            )
         else:
             console.print(
                 f"\n[bold yellow]Monitoring existing batch: {batch_id}[/bold yellow]"
@@ -320,36 +339,28 @@ class SynthgenClient:
         cached_batch = None
         UPDATE_INTERVAL = 2  # seconds
 
+        # Live dashboard render (make persistent by setting transient=False)
         def render_dashboard() -> Panel:
             nonlocal last_update, cached_batch
             current_time = time.time()
-
             if current_time - last_update >= UPDATE_INTERVAL:
                 cached_batch = self.get_batch(batch_id)
                 last_update = current_time
-
             batch = cached_batch
             status_table = Table(show_header=False, box=None, padding=(0, 4))
             status_table.add_column("Metric", justify="right", style="bold")
             status_table.add_column("Value", justify="left", style="white")
-
-            # Format duration into hours, minutes, seconds with None handling
             duration = getattr(batch, "duration", 0) or 0
             hours = int(duration // 3600)
             minutes = int((duration % 3600) // 60)
             seconds = int(duration % 60)
             duration_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-
-            # Safely get token values with fallback to 0
             total_tokens = getattr(batch, "total_tokens", 0) or 0
             prompt_tokens = getattr(batch, "prompt_tokens", 0) or 0
             completion_tokens = getattr(batch, "completion_tokens", 0) or 0
-
-            # Calculate costs
             input_cost = (prompt_tokens / 1_000_000) * cost_by_1m_input_token
             output_cost = (completion_tokens / 1_000_000) * cost_by_1m_output_token
             total_cost = input_cost + output_cost
-
             metrics = [
                 ("Completed", str(batch.completed_tasks)),
                 ("Pending", str(batch.pending_tasks)),
@@ -365,10 +376,8 @@ class SynthgenClient:
                 ("Output Cost", f"$ {output_cost:.4f}"),
                 ("Total Cost", f"$ {total_cost:.4f}"),
             ]
-
             for metric, value in metrics:
                 status_table.add_row(f"{metric}:", value)
-
             dashboard_group = Group(progress, status_table)
             return Panel(
                 dashboard_group,
@@ -376,13 +385,17 @@ class SynthgenClient:
                 border_style="bright_blue",
             )
 
-        # Monitor progress
-        with Live(render_dashboard(), refresh_per_second=2, console=console) as live:
+        # Using transient=False so that the final dashboard remains visible
+        with Live(
+            render_dashboard(),
+            refresh_per_second=2,
+            console=console,
+            transient=False,  # Changed from True to False
+        ) as live:
             while True:
                 batch = self.get_batch(batch_id)
                 progress.update(progress_task, completed=batch.completed_tasks)
                 live.update(render_dashboard())
-
                 tasks_done = batch.completed_tasks + batch.failed_tasks
                 if tasks_done >= total_tasks or batch.batch_status in [
                     "COMPLETED",
@@ -394,6 +407,5 @@ class SynthgenClient:
         console.print("\n[bold green]Batch processing completed![/bold green]")
 
         # 4. Return results
-        tasks_data = self.get_batch_tasks_all(batch_id)
-
+        tasks_data = self.get_batch_tasks(batch_id)
         return tasks_data

@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Optional, List
 from enum import Enum
 from pydantic import BaseModel
+import pandas as pd
 
 
 class TaskStatus(str, Enum):
@@ -66,8 +67,6 @@ class Batch(BaseModel):
 
 class BatchList(BaseModel):
     total: int
-    page: int
-    page_size: int
     batches: List[Batch]
 
     class Config:
@@ -76,9 +75,15 @@ class BatchList(BaseModel):
 
 class TaskList(BaseModel):
     total: int
-    page: int
-    page_size: int
     tasks: List[TaskResponse]
+
+    def to_dataframe(self) -> "pd.DataFrame":
+        """Convert the TaskList to a pandas DataFrame.
+
+        Returns:
+            pd.DataFrame: DataFrame containing all tasks data
+        """
+        return pd.DataFrame([task.model_dump() for task in self.tasks])
 
     class Config:
         from_attributes = True
@@ -113,6 +118,8 @@ class TaskSubmission(BaseModel):
     body: dict
     dataset: Optional[str] = None
     source: Optional[dict] = None
+    use_cache: bool = True
+    track_progress: bool = True
 
 
 class TaskListSubmission(BaseModel):

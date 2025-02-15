@@ -1,17 +1,21 @@
 import os
 from dotenv import load_dotenv
-from synthgen import SynthgenClient
-from synthgen.models import TaskListSubmission, TaskSubmission
 from datasets import load_dataset
 import pandas as pd
+from synthgen.sync_client import SynthgenClient
+from synthgen.models import TaskListSubmission, TaskSubmission
+import logging
 
 load_dotenv()
+# logger = logging.getLogger(__name__)
+
 
 client = SynthgenClient(base_url="http://localhost:8002")
 
 print("Loading dataset...")
 dataset_name = "nvidia/AceMath-Instruct-Training-Data"
 dataset = load_dataset(dataset_name)
+
 
 # Convert to list or iterate properly
 data = list(dataset["math_sft"].select(range(1)))  # Convert to list first
@@ -20,7 +24,7 @@ print("Creating tasks...")
 tasks = TaskListSubmission(
     tasks=[
         TaskSubmission(
-            custom_id=f"math-{idx}",
+            custom_id=idx,
             method="POST",
             url="https://api.studio.nebius.ai/v1/chat/completions",
             api_key=os.getenv("NEBIUS_API_KEY"),
@@ -52,18 +56,14 @@ batch = client.monitor_batch(
 )
 
 
-# print("Converting batch results to a list of dictionaries...")
-# # Convert batch results to a list of dictionaries
-# batch_data = [item.model_dump() for item in batch]
+print("Saving to parquet...")
+# Save to parquet using pandas
 
-# print("Saving to parquet...")
-# # Save to parquet using pandas
+df = batch.to_dataframe()
+df.to_parquet("batch_results.parquet")
 
-# df = pd.DataFrame(batch_data)
-# df.to_parquet("batch_results.parquet")
-
-# print("Loading and displaying the saved parquet file...")
-# # Load and display the saved parquet file
-# loaded_df = pd.read_parquet("batch_results.parquet")
-# print("\nFirst 3 rows of loaded parquet file:")
-# print(loaded_df.head(3))
+print("Loading and displaying the saved parquet file...")
+# Load and display the saved parquet file
+loaded_df = pd.read_parquet("batch_results.parquet")
+print("\nFirst 3 rows of loaded parquet file:")
+print(loaded_df.head(5))

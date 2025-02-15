@@ -1,5 +1,4 @@
 import httpx
-import json
 from typing import Optional, Dict, Any, List
 from .models import (
     TaskResponse,
@@ -9,7 +8,7 @@ from .models import (
     TaskRequest,
     HealthResponse,
     BulkTaskResponse,
-    TaskListSubmission,
+    Task,
 )
 from .exceptions import APIError
 import logging
@@ -131,7 +130,7 @@ class SynthgenClient:
         return HealthResponse.model_validate(response)
 
     def create_batch(
-        self, tasks: TaskListSubmission, chunk_size: int = 1000
+        self, tasks: List[Task], chunk_size: int = 1000
     ) -> BulkTaskResponse:
         """Create a new batch from TaskListSubmission with chunking logic
 
@@ -147,7 +146,7 @@ class SynthgenClient:
             APIError: If an error occurs during conversion or API request
         """
         try:
-            logger.debug(f"Starting create_batch with {len(tasks.tasks)} tasks")
+            logger.debug(f"Starting create_batch with {len(tasks)} tasks")
             logger.debug(f"Chunk size: {chunk_size}")
 
             from rich.progress import (
@@ -165,7 +164,7 @@ class SynthgenClient:
             batch_id = str(uuid.uuid4())
             logger.debug(f"Generated batch_id: {batch_id}")
 
-            total_chunks = (len(tasks.tasks) + chunk_size - 1) // chunk_size
+            total_chunks = (len(tasks) + chunk_size - 1) // chunk_size
             logger.debug(f"Will process {total_chunks} chunks")
 
             total_processed = 0
@@ -188,9 +187,7 @@ class SynthgenClient:
                 refresh_per_second=4,
             ):
                 # Process tasks in chunks
-                for chunk_index, i in enumerate(
-                    range(0, len(tasks.tasks), chunk_size), 1
-                ):
+                for chunk_index, i in enumerate(range(0, len(tasks), chunk_size), 1):
                     progress.update(
                         upload_task,
                         description=f"[cyan]Uploading chunk {chunk_index}/{total_chunks}",
@@ -204,12 +201,12 @@ class SynthgenClient:
                     )
 
                     # Create chunk
-                    chunk = TaskListSubmission(tasks=tasks.tasks[chunk_start:chunk_end])
-                    logger.debug(f"Created chunk with {len(chunk.tasks)} tasks")
+                    chunk = tasks[chunk_start:chunk_end]
+                    logger.debug(f"Created chunk with {len(chunk)} tasks")
 
                     # Convert to JSONL
                     jsonl_content = []
-                    for task in chunk.tasks:
+                    for task in chunk:
                         jsonl_content.append(task.model_dump_json())
                     jsonl_data = "\n".join(jsonl_content)
                     logger.debug(f"JSONL data created, size: {len(jsonl_data)} bytes")
@@ -251,7 +248,7 @@ class SynthgenClient:
 
     def monitor_batch(
         self,
-        tasks: Optional[TaskListSubmission] = None,
+        tasks: Optional[List[Task]] = None,
         batch_id: Optional[str] = None,
         cost_by_1m_input_token: float = 0.0,  # Cost per 1M input tokens
         cost_by_1m_output_token: float = 0.0,  # Cost per 1M output tokens

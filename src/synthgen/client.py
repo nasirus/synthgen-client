@@ -130,39 +130,3 @@ class AsyncSynthgenClient:
     async def delete_batch(self, batch_id: str) -> None:
         """Delete a batch"""
         await self._request("DELETE", f"/batches/{batch_id}")
-
-    async def create_batch_json(self, tasks: TaskListSubmission) -> BulkTaskResponse:
-        """
-        Submit bulk tasks using a JSON payload instead of a file.
-
-        Args:
-            tasks: TaskListSubmission object containing a list of TaskSubmission objects
-                  Each TaskSubmission contains:
-                  - custom_id: Unique identifier for the task
-                  - method: HTTP method
-                  - url: Target URL
-                  - api_key: Optional API key
-                  - body: Request body as dictionary
-
-        Returns:
-            A dictionary representing the BulkTaskResponse with keys:
-                - batch_id: Identifier for the created batch
-                - rows: Count of tasks submitted
-
-        Raises:
-            APIError: If an error occurs during JSON conversion or during the API request
-        """
-        try:
-            # Convert the TaskListSubmission to a JSONL string
-            jsonl_payload = "\n".join(task.model_dump_json() for task in tasks.tasks)
-        except Exception as e:
-            raise APIError(f"Error converting tasks to JSONL string: {e}")
-
-        # Prepare headers by including the appropriate Content-Type
-        headers = self._get_headers()
-        headers["Content-Type"] = "text/plain"
-
-        response = await self._request(
-            "POST", "/batches/json", content=jsonl_payload, headers=headers
-        )
-        return BulkTaskResponse.model_validate(response)

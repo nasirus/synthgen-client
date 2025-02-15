@@ -108,7 +108,7 @@ class HealthResponse(BaseModel):
     error: Optional[str] = None
 
 
-class TaskSubmission(BaseModel):
+class Task(BaseModel):
     """Model for individual task submission in bulk operations"""
 
     custom_id: str
@@ -120,12 +120,6 @@ class TaskSubmission(BaseModel):
     source: Optional[dict] = None
     use_cache: bool = True
     track_progress: bool = True
-
-
-class TaskListSubmission(BaseModel):
-    """Model for bulk task submission"""
-
-    tasks: List[TaskSubmission]
 
 
 class BulkTaskResponse(BaseModel):

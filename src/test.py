@@ -3,8 +3,7 @@ from dotenv import load_dotenv
 from datasets import load_dataset
 import pandas as pd
 from synthgen.sync_client import SynthgenClient
-from synthgen.models import TaskListSubmission, TaskSubmission
-import logging
+from synthgen.models import Task
 
 load_dotenv()
 # logger = logging.getLogger(__name__)
@@ -21,32 +20,32 @@ dataset = load_dataset(dataset_name)
 data = list(dataset["math_sft"].select(range(1)))  # Convert to list first
 
 print("Creating tasks...")
-tasks = TaskListSubmission(
-    tasks=[
-        TaskSubmission(
-            custom_id=idx,
-            method="POST",
-            url="https://api.studio.nebius.ai/v1/chat/completions",
-            api_key=os.getenv("NEBIUS_API_KEY"),
-            body={
-                "model": "meta-llama/Llama-3.2-1B-Instruct",
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "You are a mathematics tutor. Provide clear, step-by-step solutions.",
-                    },
-                    {"role": "user", "content": row["messages"][0]["content"]},
-                ],
-                "max_tokens": 1000,
-                "temperature": 0.2,
-                "stream": False,
-            },
-            dataset=dataset_name,
-            source=row,
-        )
-        for idx, row in enumerate(data)
-    ]
-)
+tasks = [
+    Task(
+        custom_id=f"id-{idx}",
+        method="POST",
+        url="https://api.studio.nebius.ai/v1/chat/completions",
+        api_key=os.getenv("NEBIUS_API_KEY"),
+        body={
+            "model": "meta-llama/Llama-3.2-1B-Instruct",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a mathematics tutor. Provide clear, step-by-step solutions.",
+                },
+                {"role": "user", "content": row["messages"][0]["content"]},
+            ],
+            "max_tokens": 1000,
+            "temperature": 0.2,
+            "stream": False,
+        },
+        dataset=dataset_name,
+        source=row,
+        use_cache=True,
+        track_progress=True,
+    )
+    for idx, row in enumerate(data)
+]
 
 
 batch = client.monitor_batch(

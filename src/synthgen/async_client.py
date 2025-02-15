@@ -4,7 +4,6 @@ from typing import Optional, Dict, Any, List, Union, BinaryIO, AsyncGenerator
 from pathlib import Path
 from .models import (
     BulkTaskResponse,
-    TaskListSubmission,
     TaskResponse,
     Batch,
     BatchList,
@@ -12,6 +11,7 @@ from .models import (
     TaskRequest,
     Message,
     HealthResponse,
+    Task,
 )
 from .exceptions import APIError
 
@@ -166,7 +166,7 @@ class AsyncSynthgenClient:
         return HealthResponse.model_validate(response)
 
 
-    async def create_batch_json(self, tasks: TaskListSubmission) -> BulkTaskResponse:
+    async def create_batch_json(self, tasks: List[Task]) -> BulkTaskResponse:
         """
         Submit bulk tasks using a JSON payload instead of a file.
 
@@ -189,7 +189,7 @@ class AsyncSynthgenClient:
         """
         try:
             # Convert the TaskListSubmission to a JSONL string
-            json_payload = tasks.model_dump_json()
+            json_payload = [task.model_dump() for task in tasks]
         except Exception as e:
             raise APIError(f"Error converting tasks to JSONL string: {e}")
 

@@ -8,7 +8,7 @@ from .models import (
     HealthResponse,
     BulkTaskResponse,
     Task,
-    TaskStatus
+    TaskStatus,
 )
 from .exceptions import APIError
 import logging
@@ -38,7 +38,10 @@ COLORS = {
 class SynthgenClient:
 
     def __init__(
-        self, base_url: str, api_key: Optional[str] = None, timeout: int = 3600
+        self,
+        base_url: str = "http://localhost:8002",
+        api_key: Optional[str] = None,
+        timeout: int = 3600,
     ):
         logger.debug(f"Initializing SynthgenClient with base_url: {base_url}")
         self.base_url = base_url.rstrip("/")
@@ -383,10 +386,14 @@ class SynthgenClient:
             total_tokens = getattr(batch, "total_tokens", 0) or 0
             prompt_tokens = getattr(batch, "prompt_tokens", 0) or 0
             completion_tokens = getattr(batch, "completion_tokens", 0) or 0
-            
+
             # Ensure we're using float values for cost calculations
-            input_cost = (float(prompt_tokens) / 1_000_000) * float(cost_by_1m_input_token)
-            output_cost = (float(completion_tokens) / 1_000_000) * float(cost_by_1m_output_token)
+            input_cost = (float(prompt_tokens) / 1_000_000) * float(
+                cost_by_1m_input_token
+            )
+            output_cost = (float(completion_tokens) / 1_000_000) * float(
+                cost_by_1m_output_token
+            )
             total_cost = input_cost + output_cost
 
             # Add rows with consistent formatting
@@ -445,18 +452,26 @@ class SynthgenClient:
         self, batch_id: str, task_status: TaskStatus = TaskStatus.COMPLETED
     ) -> List[TaskResponse]:
         """Stream tasks for a given batch while displaying download progress."""
-        from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
-        
+        from rich.progress import (
+            Progress,
+            SpinnerColumn,
+            TextColumn,
+            BarColumn,
+            TaskProgressColumn,
+        )
+
         # Fetch metadata to know the total number of tasks
         batch = self.get_batch(batch_id)
         total_tasks = getattr(batch, "total_tasks", None)
-        
+
         params = {"task_status": task_status.value}
         url = f"{self.base_url}/api/v1/batches/{batch_id}/tasks"
 
         tasks_accumulated: List[TaskResponse] = []
 
-        with self._client.stream("GET", url, params=params, headers=self._get_headers()) as response:
+        with self._client.stream(
+            "GET", url, params=params, headers=self._get_headers()
+        ) as response:
             response.raise_for_status()
             with Progress(
                 SpinnerColumn(),

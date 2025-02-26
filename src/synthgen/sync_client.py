@@ -4,7 +4,6 @@ from .models import (
     TaskResponse,
     Batch,
     BatchList,
-    TaskRequest,
     HealthResponse,
     BulkTaskResponse,
     Task,
@@ -16,6 +15,7 @@ import uuid
 from io import BytesIO
 import time
 import json
+import os
 
 # Configure logging at the top of the file
 logging.basicConfig(
@@ -39,18 +39,40 @@ class SynthgenClient:
 
     def __init__(
         self,
-        base_url: str = "http://localhost:8002",
+        base_url: str = None,
         api_key: Optional[str] = None,
         timeout: int = 3600,
+        config_file: str = None,
     ):
-        logger.debug(f"Initializing SynthgenClient with base_url: {base_url}")
-        self.base_url = base_url.rstrip("/")
-        self.api_key = api_key
+        """Initialize the client with configuration from multiple sources.
+
+        Args:
+            base_url: The base URL of the Synthgen API. Defaults to environment variable SYNTHGEN_BASE_URL or "http://localhost:8002".
+            api_key: The API key for authentication. Defaults to environment variable SYNTHGEN_API_KEY.
+            timeout: Request timeout in seconds. Defaults to 3600.
+            config_file: Path to a configuration file. If provided, settings will be loaded from this file.
+        """
+        # Load from config file if provided
+        if config_file:
+            self._load_config(config_file)
+
+        # Environment variables take precedence over config file
+        self.base_url = base_url or os.environ.get(
+            "SYNTHGEN_BASE_URL", "http://localhost:8002"
+        )
+        self.api_key = api_key or os.environ.get("SYNTHGEN_API_KEY")
+
+        logger.debug(f"Initializing SynthgenClient with base_url: {self.base_url}")
         self.timeout = timeout
         self._client = httpx.Client(timeout=timeout, headers=self._get_headers())
         logger.debug("SynthgenClient initialized successfully")
 
     def _get_headers(self) -> Dict[str, str]:
+        """Generate HTTP headers for API requests.
+
+        Returns:
+            Dictionary of HTTP headers including authorization if API key is available.
+        """
         headers = {
             "Accept": "application/json",
         }
@@ -59,17 +81,35 @@ class SynthgenClient:
         return headers
 
     def close(self):
-        """Close the underlying HTTP client"""
+        """Close the underlying HTTP client to free resources."""
         self._client.close()
 
     def __enter__(self):
+        """Enable context manager support for the client.
+
+        Returns:
+            The client instance.
+        """
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        """Handle context manager exit by closing the client."""
         self.close()
 
     def _request(self, method: str, path: str, **kwargs) -> Any:
-        """Make an HTTP request to the API with robust retry logic that adds a delay upon each exception."""
+        """Make an HTTP request to the API with robust retry logic.
+
+        Args:
+            method: HTTP method (GET, POST, etc.)
+            path: API endpoint path
+            **kwargs: Additional arguments to pass to the request
+
+        Returns:
+            Parsed JSON response or None if no content
+
+        Raises:
+            APIError: If the request fails after all retry attempts
+        """
         url = f"{self.base_url}{path}"
         max_retries = 10
         base_delay = 5  # base delay in seconds
@@ -102,48 +142,72 @@ class SynthgenClient:
                     continue
                 raise APIError(str(e))
 
-    def create_task(self, task: TaskRequest) -> str:
-        """Create a new task"""
-        response = self._request("POST", "/api/v1/tasks", json=task.model_dump())
-        return response["message_id"]
-
     def get_task(self, message_id: str) -> TaskResponse:
-        """Get task status and result"""
+        """Get task status and result.
+
+        Args:
+            message_id: The unique identifier of the task
+
+        Returns:
+            TaskResponse object containing task details and results
+        """
         response = self._request("GET", f"/api/v1/tasks/{message_id}")
 
         return TaskResponse.model_validate(response)
 
     def delete_task(self, message_id: str) -> None:
-        """Delete a task"""
+        """Delete a task from the system.
+
+        Args:
+            message_id: The unique identifier of the task to delete
+        """
         self._request("DELETE", f"/api/v1/tasks/{message_id}")
 
     def get_batch(self, batch_id: str) -> Batch:
-        """Get batch status"""
+        """Get batch status and metadata.
+
+        Args:
+            batch_id: The unique identifier of the batch
+
+        Returns:
+            Batch object containing batch details
+        """
         response = self._request("GET", f"/api/v1/batches/{batch_id}")
         return Batch.model_validate(response)
 
     def get_batches(self) -> BatchList:
-        """List all batches"""
+        """List all batches in the system.
+
+        Returns:
+            BatchList object containing all batches
+        """
         response = self._request("GET", "/api/v1/batches")
         return BatchList.model_validate(response)
 
     def delete_batch(self, batch_id: str) -> None:
-        """Delete a batch"""
+        """Delete a batch from the system.
+
+        Args:
+            batch_id: The unique identifier of the batch to delete
+        """
         self._request("DELETE", f"/api/v1/batches/{batch_id}")
 
     def check_health(self) -> HealthResponse:
-        """Check system health status"""
+        """Check system health status of all services.
+
+        Returns:
+            HealthResponse object containing status of all system components
+        """
         response = self._request("GET", "/health")
         return HealthResponse.model_validate(response)
 
     def create_batch(
         self, tasks: List[Task], chunk_size: int = 1000
     ) -> BulkTaskResponse:
-        """Create a new batch from TaskListSubmission with chunking logic
+        """Create a new batch from a list of tasks with chunking logic.
 
         Args:
-            tasks: TaskListSubmission object containing a list of TaskSubmission objects
-                  Each TaskSubmission contains task details like custom_id, method, url, etc.
+            tasks: List of Task objects containing task details
             chunk_size: Number of tasks to process in each chunk (default: 1000)
 
         Returns:
@@ -265,7 +329,23 @@ class SynthgenClient:
         cost_by_1m_input_token: float = 0.0,
         cost_by_1m_output_token: float = 0.0,
     ) -> List[TaskResponse]:
-        """Monitor batch task processing with harmonized UI"""
+        """Monitor batch task processing with real-time progress display.
+
+        Provides a rich UI showing batch progress, token usage, and cost estimates.
+        Either submits a new batch using the provided tasks or monitors an existing batch.
+
+        Args:
+            tasks: List of Task objects to submit as a new batch (optional if batch_id is provided)
+            batch_id: ID of an existing batch to monitor (optional if tasks is provided)
+            cost_by_1m_input_token: Cost per million input tokens for cost calculation
+            cost_by_1m_output_token: Cost per million output tokens for cost calculation
+
+        Returns:
+            List of TaskResponse objects containing completed task results
+
+        Raises:
+            ValueError: If neither tasks nor batch_id is provided
+        """
         from rich.console import Console, Group
         from rich.live import Live
         from rich.table import Table
@@ -310,10 +390,10 @@ class SynthgenClient:
             f"[{COLORS['muted']}]Messages: {health.services.queue_messages}[/]",
         )
         health_table.add_row(
-            "Postgres",
+            "Elasticsearch",
             (
-                f"[{get_status_style(health.services.postgres.value)}]●[/] Online"
-                if health.services.postgres.value
+                f"[{get_status_style(health.services.elasticsearch.value)}]●[/] Online"
+                if health.services.elasticsearch.value
                 else f"[{COLORS['error']}]●[/] Offline"
             ),
             "",
@@ -451,7 +531,15 @@ class SynthgenClient:
     def get_batch_tasks(
         self, batch_id: str, task_status: TaskStatus = TaskStatus.COMPLETED
     ) -> List[TaskResponse]:
-        """Stream tasks for a given batch while displaying download progress."""
+        """Stream tasks for a given batch while displaying download progress.
+
+        Args:
+            batch_id: The unique identifier of the batch
+            task_status: Filter tasks by status (default: COMPLETED)
+
+        Returns:
+            List of TaskResponse objects matching the specified criteria
+        """
         from rich.progress import (
             Progress,
             SpinnerColumn,

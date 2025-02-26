@@ -3,21 +3,12 @@ from typing import Optional, List
 from enum import Enum
 from pydantic import BaseModel
 
+
 class TaskStatus(str, Enum):
     PENDING = "PENDING"
     PROCESSING = "PROCESSING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
-
-
-class Message(BaseModel):
-    role: str
-    content: str
-
-
-class TaskRequest(BaseModel):
-    model: str
-    messages: List[Message]
 
 
 class TaskResponse(BaseModel):
@@ -75,7 +66,7 @@ class HealthStatus(str, Enum):
 class ServiceStatus(BaseModel):
     api: HealthStatus = HealthStatus.HEALTHY
     rabbitmq: HealthStatus = HealthStatus.UNHEALTHY
-    postgres: HealthStatus = HealthStatus.UNHEALTHY
+    elasticsearch: HealthStatus = HealthStatus.UNHEALTHY
     queue_consumers: int = 0
     queue_messages: int = 0
 

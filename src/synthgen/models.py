@@ -168,8 +168,8 @@ class Task(BaseModel):
 
     Attributes:
         custom_id: Client-defined unique identifier for the task
-        method: HTTP method to use for the task (GET, POST, etc.)
         url: Target URL for the task
+        method: HTTP method (POST)
         api_key: Optional API key for authentication
         body: Request body containing task parameters
         dataset: Optional dataset identifier to associate with this task
@@ -179,8 +179,8 @@ class Task(BaseModel):
     """
 
     custom_id: str
-    method: str
     url: str
+    method: str = "POST"
     api_key: Optional[str] = None
     body: dict
     dataset: Optional[str] = None

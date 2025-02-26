@@ -2,8 +2,6 @@ from datetime import datetime
 from typing import Optional, List
 from enum import Enum
 from pydantic import BaseModel
-import pandas as pd
-
 
 class TaskStatus(str, Enum):
     PENDING = "PENDING"
@@ -27,18 +25,14 @@ class TaskResponse(BaseModel):
     batch_id: Optional[str] = None
     status: TaskStatus
     body: Optional[dict] = None
-    result: Optional[dict] = None
-    prompt_tokens: Optional[int] = None
-    completion_tokens: Optional[int] = None
-    total_tokens: Optional[int] = None
     cached: bool = False
     created_at: datetime
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     duration: Optional[int] = None
-    queue_position: Optional[int] = None
     dataset: Optional[str] = None
     source: Optional[dict] = None
+    completions: Optional[dict] = None
 
     class Config:
         from_attributes = True
@@ -68,22 +62,6 @@ class Batch(BaseModel):
 class BatchList(BaseModel):
     total: int
     batches: List[Batch]
-
-    class Config:
-        from_attributes = True
-
-
-class TaskList(BaseModel):
-    total: int
-    tasks: List[TaskResponse]
-
-    def to_dataframe(self) -> "pd.DataFrame":
-        """Convert the TaskList to a pandas DataFrame.
-
-        Returns:
-            pd.DataFrame: DataFrame containing all tasks data
-        """
-        return pd.DataFrame([task.model_dump() for task in self.tasks])
 
     class Config:
         from_attributes = True

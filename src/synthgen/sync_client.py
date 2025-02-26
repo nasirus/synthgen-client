@@ -4,17 +4,18 @@ from .models import (
     TaskResponse,
     Batch,
     BatchList,
-    TaskList,
     TaskRequest,
     HealthResponse,
     BulkTaskResponse,
     Task,
+    TaskStatus
 )
 from .exceptions import APIError
 import logging
 import uuid
 from io import BytesIO
 import time
+import json
 
 # Configure logging at the top of the file
 logging.basicConfig(
@@ -22,11 +23,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Define a consistent color palette
+COLORS = {
+    "primary": "dodger_blue1",
+    "success": "green3",
+    "warning": "yellow3",
+    "error": "red3",
+    "text": "white",
+    "muted": "grey70",
+    "border": "dodger_blue1",
+}
+
 
 class SynthgenClient:
 
     def __init__(
-        self, base_url: str, api_key: Optional[str] = None, timeout: int = 300
+        self, base_url: str, api_key: Optional[str] = None, timeout: int = 3600
     ):
         logger.debug(f"Initializing SynthgenClient with base_url: {base_url}")
         self.base_url = base_url.rstrip("/")
@@ -112,17 +124,9 @@ class SynthgenClient:
         response = self._request("GET", "/api/v1/batches")
         return BatchList.model_validate(response)
 
-    def get_batch_tasks(self, batch_id: str) -> TaskList:
-        """Get tasks in a batch"""
-        response = self._request(
-            "GET",
-            f"/api/v1/batches/{batch_id}/tasks",
-        )
-        return TaskList.model_validate(response)
-
     def delete_batch(self, batch_id: str) -> None:
         """Delete a batch"""
-        self._request("DELETE", f"/batches/{batch_id}")
+        self._request("DELETE", f"/api/v1/batches/{batch_id}")
 
     def check_health(self) -> HealthResponse:
         """Check system health status"""
@@ -182,7 +186,12 @@ class SynthgenClient:
 
             # Use Live display with Panel
             with Live(
-                Panel(progress, title="Batch Upload Progress", border_style="blue"),
+                Panel(
+                    progress,
+                    title=f"[bold {COLORS['primary']}]Batch Upload Progress[/]",
+                    border_style=COLORS["border"],
+                    padding=(1, 2),
+                ),
                 console=console,
                 refresh_per_second=4,
             ):
@@ -250,26 +259,10 @@ class SynthgenClient:
         self,
         tasks: Optional[List[Task]] = None,
         batch_id: Optional[str] = None,
-        cost_by_1m_input_token: float = 0.0,  # Cost per 1M input tokens
-        cost_by_1m_output_token: float = 0.0,  # Cost per 1M output tokens
-    ) -> TaskList:
-        """
-        Run an interactive dashboard that monitors batch task processing.
-
-        Args:
-            tasks: Optional TaskListSubmission object containing the tasks to process.
-                  Required if batch_id is not provided.
-            batch_id: Optional existing batch ID to monitor.
-                     If provided, tasks parameter will be ignored.
-            cost_by_1m_input_token: Cost per 1M input tokens (default: 0.0)
-            cost_by_1m_output_token: Cost per 1M output tokens (default: 0.0)
-
-        Returns:
-            List[TaskResponse]: List of completed tasks with their results
-
-        Raises:
-            ValueError: If neither tasks nor batch_id is provided
-        """
+        cost_by_1m_input_token: float = 0.0,
+        cost_by_1m_output_token: float = 0.0,
+    ) -> List[TaskResponse]:
+        """Monitor batch task processing with harmonized UI"""
         from rich.console import Console, Group
         from rich.live import Live
         from rich.table import Table
@@ -285,26 +278,56 @@ class SynthgenClient:
 
         console = Console()
 
-        # 1. Health Check Display
+        # 1. Health Check Display with harmonized styling
         health = self.check_health()
-        health_table = Table(
-            title="Health Check", show_header=True, header_style="bold cyan"
+        health_table = Table(show_header=True, header_style=f"bold {COLORS['primary']}")
+        health_table.add_column("Service", justify="left", style=COLORS["text"])
+        health_table.add_column("Status", justify="center")
+        health_table.add_column("Details", justify="right", style=COLORS["muted"])
+
+        def get_status_style(status: bool) -> str:
+            return COLORS["success"] if status else COLORS["error"]
+
+        health_table.add_row(
+            "API",
+            (
+                f"[{get_status_style(health.services.api.value)}]●[/] Online"
+                if health.services.api.value
+                else f"[{COLORS['error']}]●[/] Offline"
+            ),
+            "",
         )
-        health_table.add_column("Service", justify="center")
-        health_table.add_column("Status", justify="center", style="green")
-        health_table.add_column("Details", justify="center")
-        health_table.add_row("API", str(health.services.api.value), "")
         health_table.add_row(
             "RabbitMQ",
-            str(health.services.rabbitmq.value),
-            f"Messages: {health.services.queue_messages}",
+            (
+                f"[{get_status_style(health.services.rabbitmq.value)}]●[/] Online"
+                if health.services.rabbitmq.value
+                else f"[{COLORS['error']}]●[/] Offline"
+            ),
+            f"[{COLORS['muted']}]Messages: {health.services.queue_messages}[/]",
         )
-        health_table.add_row("Postgres", str(health.services.postgres.value), "")
         health_table.add_row(
-            "Queue Consumers", "", str(health.services.queue_consumers)
+            "Postgres",
+            (
+                f"[{get_status_style(health.services.postgres.value)}]●[/] Online"
+                if health.services.postgres.value
+                else f"[{COLORS['error']}]●[/] Offline"
+            ),
+            "",
         )
+        health_table.add_row(
+            "Queue Consumers",
+            "",
+            f"[{COLORS['muted']}]Active: {health.services.queue_consumers}[/]",
+        )
+
         console.print(
-            Panel(health_table, title="[bold blue]System Health", border_style="blue")
+            Panel(
+                health_table,
+                title=f"[bold {COLORS['primary']}]System Health[/]",
+                border_style=COLORS["border"],
+                padding=(1, 2),
+            )
         )
 
         # 2. Submit batch or use existing batch_id
@@ -322,21 +345,22 @@ class SynthgenClient:
             batch = self.get_batch(batch_id)
             total_tasks = batch.total_tasks
 
-        # 3. Setup progress monitoring
+        # 3. Setup progress monitoring with harmonized styling
         progress = Progress(
-            SpinnerColumn(style="green"),
-            TextColumn("[bold blue]{task.description}"),
-            BarColumn(bar_width=None, style="green"),
-            TaskProgressColumn(),
+            SpinnerColumn(style=COLORS["primary"]),
+            TextColumn(f"[{COLORS['text']}]{{task.description}}[/]"),
+            BarColumn(
+                complete_style=COLORS["success"], finished_style=COLORS["success"]
+            ),
+            TaskProgressColumn(style=COLORS["text"]),
         )
-        progress_task = progress.add_task("Monitoring Batch...", total=total_tasks)
+        progress_task = progress.add_task("Processing batch...", total=total_tasks)
 
         # Track last update time to prevent too frequent API calls
         last_update = 0
         cached_batch = None
         UPDATE_INTERVAL = 2  # seconds
 
-        # Live dashboard render (make persistent by setting transient=False)
         def render_dashboard() -> Panel:
             nonlocal last_update, cached_batch
             current_time = time.time()
@@ -344,42 +368,52 @@ class SynthgenClient:
                 cached_batch = self.get_batch(batch_id)
                 last_update = current_time
             batch = cached_batch
-            status_table = Table(show_header=False, box=None, padding=(0, 4))
-            status_table.add_column("Metric", justify="right", style="bold")
-            status_table.add_column("Value", justify="left", style="white")
+
+            # Create status table with consistent styling
+            status_table = Table(show_header=False, box=None, padding=(0, 2))
+            status_table.add_column("Metric", justify="right", style=COLORS["muted"])
+            status_table.add_column("Value", justify="left", style=COLORS["text"])
+
+            # Calculate metrics
             duration = getattr(batch, "duration", 0) or 0
-            hours = int(duration // 3600)
-            minutes = int((duration % 3600) // 60)
-            seconds = int(duration % 60)
-            duration_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            hours, remainder = divmod(duration, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            duration_str = f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
+
             total_tokens = getattr(batch, "total_tokens", 0) or 0
             prompt_tokens = getattr(batch, "prompt_tokens", 0) or 0
             completion_tokens = getattr(batch, "completion_tokens", 0) or 0
-            input_cost = (prompt_tokens / 1_000_000) * cost_by_1m_input_token
-            output_cost = (completion_tokens / 1_000_000) * cost_by_1m_output_token
+            
+            # Ensure we're using float values for cost calculations
+            input_cost = (float(prompt_tokens) / 1_000_000) * float(cost_by_1m_input_token)
+            output_cost = (float(completion_tokens) / 1_000_000) * float(cost_by_1m_output_token)
             total_cost = input_cost + output_cost
+
+            # Add rows with consistent formatting
             metrics = [
-                ("Completed", str(batch.completed_tasks)),
-                ("Pending", str(batch.pending_tasks)),
-                ("Processing", str(batch.processing_tasks)),
-                ("Failed", str(batch.failed_tasks)),
-                ("Cached", str(batch.cached_tasks)),
-                ("Total", str(batch.total_tasks)),
+                ("Completed", f"[{COLORS['success']}]{batch.completed_tasks:,}[/]"),
+                ("Pending", f"[{COLORS['warning']}]{batch.pending_tasks:,}[/]"),
+                ("Processing", f"[{COLORS['primary']}]{batch.processing_tasks:,}[/]"),
+                ("Failed", f"[{COLORS['error']}]{batch.failed_tasks:,}[/]"),
+                ("Cached", f"[{COLORS['muted']}]{batch.cached_tasks:,}[/]"),
+                ("Total", f"[bold {COLORS['text']}]{batch.total_tasks:,}[/]"),
                 ("Duration", duration_str),
                 ("Prompt Tokens", f"{prompt_tokens:,}"),
                 ("Completion Tokens", f"{completion_tokens:,}"),
-                ("Total Tokens", f"{total_tokens:,}"),
-                ("Input Cost", f"$ {input_cost:.4f}"),
-                ("Output Cost", f"$ {output_cost:.4f}"),
-                ("Total Cost", f"$ {total_cost:.4f}"),
+                ("Total Tokens", f"[bold]{total_tokens:,}[/]"),
+                ("Input Cost", f"${input_cost:.4f}"),
+                ("Output Cost", f"${output_cost:.4f}"),
+                ("Total Cost", f"[bold]${total_cost:.4f}[/]"),
             ]
+
             for metric, value in metrics:
                 status_table.add_row(f"{metric}:", value)
-            dashboard_group = Group(progress, status_table)
+
             return Panel(
-                dashboard_group,
-                title=f"Batch ID: {batch_id}",
-                border_style="bright_blue",
+                Group(progress, status_table),
+                title=f"[bold {COLORS['primary']}]Batch ID: {batch_id}[/]",
+                border_style=COLORS["border"],
+                padding=(1, 2),
             )
 
         # Using transient=False so that the final dashboard remains visible
@@ -406,3 +440,44 @@ class SynthgenClient:
         # 4. Return results
         tasks_data = self.get_batch_tasks(batch_id)
         return tasks_data
+
+    def get_batch_tasks(
+        self, batch_id: str, task_status: TaskStatus = TaskStatus.COMPLETED
+    ) -> List[TaskResponse]:
+        """Stream tasks for a given batch while displaying download progress."""
+        from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+        
+        # Fetch metadata to know the total number of tasks
+        batch = self.get_batch(batch_id)
+        total_tasks = getattr(batch, "total_tasks", None)
+        
+        params = {"task_status": task_status.value}
+        url = f"{self.base_url}/api/v1/batches/{batch_id}/tasks"
+
+        tasks_accumulated: List[TaskResponse] = []
+
+        with self._client.stream("GET", url, params=params, headers=self._get_headers()) as response:
+            response.raise_for_status()
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+            ) as progress:
+                progress_task = progress.add_task(
+                    "Downloading tasks...", total=total_tasks
+                )
+
+                for line in response.iter_lines():
+                    if line:
+                        try:
+                            chunk = json.loads(line.decode("utf-8"))
+                        except AttributeError:
+                            chunk = json.loads(line)
+                        tasks = chunk.get("tasks", [])
+                        # Convert each task to TaskResponse
+                        for task in tasks:
+                            tasks_accumulated.append(TaskResponse.model_validate(task))
+                        progress.advance(progress_task, len(tasks))
+
+        return tasks_accumulated

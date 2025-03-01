@@ -122,6 +122,15 @@ class SynthgenClient:
                 response.raise_for_status()
                 return response.json() if response.content else None
             except httpx.HTTPStatusError as e:
+                # Don't retry on 401 Unauthorized errors
+                if e.response.status_code == 401:
+                    logger.error(f"Authentication error (401 Unauthorized): {str(e)}")
+                    raise APIError(
+                        "Authentication failed. Please check your API key.",
+                        status_code=e.response.status_code,
+                        response=e.response
+                    )
+                
                 if attempt < max_retries - 1:
                     logger.warning(
                         f"HTTPStatusError {e.response.status_code} encountered on attempt {attempt + 1} of {max_retries}. "

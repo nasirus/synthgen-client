@@ -1,6 +1,8 @@
 import httpx
 from typing import Optional, Dict, Any, List
+from pydantic import BaseModel, field_validator
 from .models import (
+    CalendarInterval,
     TaskResponse,
     Batch,
     BatchList,
@@ -8,6 +10,7 @@ from .models import (
     BulkTaskResponse,
     Task,
     TaskStatus,
+    UsageStatsResponse,
 )
 from .exceptions import APIError
 import logging
@@ -16,7 +19,10 @@ from io import BytesIO
 import time
 import json
 import os
+import re
+from dotenv import load_dotenv
 
+load_dotenv()
 # Configure logging at the top of the file
 logging.basicConfig(
     level=logging.ERROR, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -33,6 +39,50 @@ COLORS = {
     "muted": "grey70",
     "border": "dodger_blue1",
 }
+
+
+class TimeRange(BaseModel):
+    """
+    Validator for Elasticsearch date math expressions used in time range queries.
+    Supports common formats like:
+    - 5m (5 minutes)
+    - 2h (2 hours)
+    - 1d (1 day)
+
+    Note: The 'now-' prefix is added automatically by the ElasticsearchClient.get_usage_stats method,
+    so it should not be included in the time_range parameter.
+    """
+
+    time_range: str
+
+    @field_validator("time_range")
+    @classmethod
+    def validate_time_range(cls, v):
+        # Pattern to validate time ranges in the format of Xm, Xh, Xd
+        pattern = r"^(\d+)([mhd])$"
+        match = re.match(pattern, v)
+
+        if not match:
+            raise ValueError(
+                "Time range must be in format 'Xm', 'Xh', or 'Xd' "
+                "where X is a positive number and m=minutes, h=hours, d=days"
+            )
+
+        value, unit = match.groups()
+        value = int(value)
+
+        if value <= 0:
+            raise ValueError("Time range value must be positive")
+
+        # Validate specific unit limits if needed
+        if unit == "m" and value > 1440:  # 24 hours in minutes
+            raise ValueError("Minutes should not exceed 1440 (24 hours)")
+        elif unit == "h" and value > 720:  # 30 days in hours
+            raise ValueError("Hours should not exceed 720 (30 days)")
+        elif unit == "d" and value > 365:  # 1 year in days
+            raise ValueError("Days should not exceed 365 (1 year)")
+
+        return v
 
 
 class SynthgenClient:
@@ -60,7 +110,7 @@ class SynthgenClient:
         self.base_url = base_url or os.environ.get(
             "SYNTHGEN_BASE_URL", "http://localhost:8002"
         )
-        self.api_key = api_key or os.environ.get("SYNTHGEN_API_KEY")
+        self.api_key = api_key or os.environ.get("API_SECRET_KEY")
 
         logger.debug(f"Initializing SynthgenClient with base_url: {self.base_url}")
         self.timeout = timeout
@@ -69,25 +119,25 @@ class SynthgenClient:
 
     def _load_config(self, config_file: str) -> None:
         """Load configuration from a JSON file.
-        
+
         Args:
             config_file: Path to the configuration file
-            
+
         Raises:
             APIError: If the file cannot be read or contains invalid JSON
         """
         try:
-            with open(config_file, 'r') as f:
+            with open(config_file, "r") as f:
                 config = json.load(f)
-            
+
             # Extract configuration values, setting instance variables
-            self.base_url = config.get('base_url')
-            self.api_key = config.get('api_key')
-            self.timeout = config.get('timeout', 3600)
-            
+            self.base_url = config.get("base_url")
+            self.api_key = config.get("api_key")
+            self.timeout = config.get("timeout", 3600)
+
             # Log successful configuration loading
             logger.debug(f"Loaded configuration from {config_file}")
-            
+
         except (json.JSONDecodeError, FileNotFoundError) as e:
             logger.error(f"Error loading configuration from {config_file}: {str(e)}")
             raise APIError(f"Failed to load configuration: {str(e)}")
@@ -153,9 +203,9 @@ class SynthgenClient:
                     raise APIError(
                         "Authentication failed. Please check your API key.",
                         status_code=e.response.status_code,
-                        response=e.response
+                        response=e.response,
                     )
-                
+
                 if attempt < max_retries - 1:
                     logger.warning(
                         f"HTTPStatusError {e.response.status_code} encountered on attempt {attempt + 1} of {max_retries}. "
@@ -618,3 +668,60 @@ class SynthgenClient:
                         progress.advance(progress_task, len(tasks))
 
         return tasks_accumulated
+
+    def get_batch_stats(
+        self,
+        batch_id: str,
+        time_range: str = "24h",
+        interval: CalendarInterval = CalendarInterval.HOUR_SHORT,
+    ) -> UsageStatsResponse:
+        """Get time-bucketed usage statistics for a batch.
+
+        Args:
+            batch_id: The unique identifier of the batch
+            time_range: Time range for statistics without 'now-' prefix (e.g., "5m", "2h", "7d")
+            interval: Time bucket size using Elasticsearch calendar intervals
+
+        The interval parameter accepts the following Elasticsearch calendar intervals:
+        - minute, 1m: One minute interval
+        - hour, 1h: One hour interval
+        - day, 1d: One day interval
+        - week, 1w: One week interval
+        - month, 1M: One month interval
+        - quarter, 1q: One quarter interval
+        - year, 1y: One year interval
+
+        The time_range parameter format (without 'now-' prefix, which is added automatically):
+        - Xm: X minutes (e.g., 30m for the last 30 minutes)
+        - Xh: X hours (e.g., 6h for the last 6 hours)
+        - Xd: X days (e.g., 7d for the last 7 days)
+
+        Returns:
+            UsageStatsResponse object containing batch statistics and time series data
+
+        Raises:
+            APIError: If the statistics cannot be retrieved or parameters are invalid
+        """
+        logger.debug(
+            f"Fetching stats for batch {batch_id} with time_range={time_range}, interval={interval}"
+        )
+
+        try:
+            # Validate the time_range parameter
+            TimeRange(time_range=time_range)
+
+            params = {"time_range": time_range, "interval": interval.value}
+
+            response = self._request(
+                "GET", f"/api/v1/batches/{batch_id}/stats", params=params
+            )
+            logger.debug(f"Successfully retrieved stats for batch {batch_id}")
+            return UsageStatsResponse.model_validate(response)
+
+        except ValueError as ve:
+            # Handle validation errors from the TimeRange validator
+            logger.error(f"Invalid time_range parameter: {str(ve)}")
+            raise APIError(f"Invalid time_range parameter: {str(ve)}")
+        except Exception as e:
+            logger.error(f"Failed to fetch stats for batch {batch_id}: {str(e)}")
+            raise APIError(f"Failed to fetch batch statistics: {str(e)}")

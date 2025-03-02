@@ -200,3 +200,98 @@ class BulkTaskResponse(BaseModel):
 
     batch_id: str
     total_tasks: int
+
+
+class TimeSeriesDataPoint(BaseModel):
+    """
+    Model representing a single data point in a time series of batch metrics.
+
+    Attributes:
+        timestamp: The timestamp for this data point
+        total_tasks: Total number of tasks in this time bucket
+        completed_tasks: Number of successfully completed tasks
+        failed_tasks: Number of failed tasks
+        cached_tasks: Number of tasks retrieved from cache
+        total_tokens: Total token count (input + output)
+        prompt_tokens: Number of input tokens processed
+        completion_tokens: Number of output tokens generated
+        avg_duration_ms: Average task duration in milliseconds
+        tokens_per_second: Processing throughput in tokens per second
+    """
+    timestamp: str
+    total_tasks: int
+    completed_tasks: int
+    failed_tasks: int
+    cached_tasks: int
+    total_tokens: int
+    prompt_tokens: int
+    completion_tokens: int
+    avg_duration_ms: int
+    tokens_per_second: float
+
+
+class StatsSummary(BaseModel):
+    """
+    Model representing a summary of batch usage statistics.
+
+    Attributes:
+        total_tasks: Total number of tasks in the batch
+        completed_tasks: Number of successfully completed tasks
+        failed_tasks: Number of failed tasks
+        cached_tasks: Number of tasks retrieved from cache
+        total_tokens: Total token count (input + output)
+        completion_tokens: Number of output tokens generated
+        average_response_time: Average task response time in milliseconds
+        tokens_per_second: Processing throughput in tokens per second
+        cache_hit_rate: Ratio of cached tasks to total tasks
+    """
+    total_tasks: int
+    completed_tasks: int
+    failed_tasks: int
+    cached_tasks: int
+    total_tokens: int
+    completion_tokens: int
+    average_response_time: int
+    tokens_per_second: float
+    cache_hit_rate: float
+
+
+class UsageStatsResponse(BaseModel):
+    """
+    Response model for batch usage statistics.
+
+    Attributes:
+        time_range: The requested time range (e.g., "24h", "7d")
+        interval: The time bucket interval (e.g., "1h", "1d")
+        current_time: Current timestamp when the stats were generated
+        time_series: List of time series data points
+        summary: Aggregated statistics summary
+    """
+    time_range: str
+    interval: str
+    current_time: str
+    time_series: List[TimeSeriesDataPoint]
+    summary: StatsSummary
+
+class CalendarInterval(str, Enum):
+    """
+    Valid Elasticsearch calendar intervals as described in the documentation.
+
+    Calendar intervals are time-based intervals that account for irregular time periods like
+    months (which can have 28-31 days) or years (which can be leap years).
+    """
+
+    MINUTE = "minute"
+    MINUTE_SHORT = "1m"
+    HOUR = "hour"
+    HOUR_SHORT = "1h"
+    DAY = "day"
+    DAY_SHORT = "1d"
+    WEEK = "week"
+    WEEK_SHORT = "1w"
+    MONTH = "month"
+    MONTH_SHORT = "1M"
+    QUARTER = "quarter"
+    QUARTER_SHORT = "1q"
+    YEAR = "year"
+    YEAR_SHORT = "1y"

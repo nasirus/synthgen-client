@@ -249,6 +249,47 @@ failed_tasks = client.get_batch_tasks("batch-id", task_status=TaskStatus.FAILED)
 client.delete_batch("batch-id")
 ```
 
+## Time-Series Batch Statistics
+
+The client provides detailed time-series statistics for monitoring batch performance over time:
+
+```python
+# Get time-series statistics for a batch
+stats = client.get_batch_stats(
+    batch_id="batch-id",
+    time_range="24h",            # Time range to analyze (e.g., "5m", "2h", "7d")
+    interval=CalendarInterval.HOUR_SHORT  # Time bucket size
+)
+
+# Access time series data points
+for point in stats.time_series:
+    print(f"Timestamp: {point.timestamp}")
+    print(f"Completed tasks: {point.completed_tasks}")
+    print(f"Total tokens: {point.total_tokens}")
+    print(f"Avg response time: {point.avg_duration_ms}ms")
+    print(f"Throughput: {point.tokens_per_second} tokens/sec")
+
+# Access summary statistics
+summary = stats.summary
+print(f"Total tasks: {summary.total_tasks}")
+print(f"Cache hit rate: {summary.cache_hit_rate:.2%}")
+print(f"Average response time: {summary.average_response_time}ms")
+print(f"Overall throughput: {summary.tokens_per_second} tokens/sec")
+```
+
+The `interval` parameter supports various Elasticsearch calendar intervals:
+- `MINUTE_SHORT` / `"1m"`: One minute interval
+- `HOUR_SHORT` / `"1h"`: One hour interval
+- `DAY_SHORT` / `"1d"`: One day interval
+- `WEEK_SHORT` / `"1w"`: One week interval
+- `MONTH_SHORT` / `"1M"`: One month interval
+
+This data is useful for:
+- Monitoring system performance trends over time
+- Analyzing throughput patterns
+- Identifying processing bottlenecks
+- Evaluating cache efficiency
+
 ## Context Manager Support
 
 The client supports the context manager protocol for automatic resource cleanup:

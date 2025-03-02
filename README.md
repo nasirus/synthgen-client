@@ -98,22 +98,31 @@ client = SynthgenClient()
 client = SynthgenClient(
     base_url="http://localhost:8002",
     api_key="your-api-key",
-    timeout=7200  # 2 hours
+    timeout=3600  # Optional request timeout in seconds
 )
 ```
 
 ### Configuration File
+
+You can use a JSON configuration file for easier configuration management:
 
 ```python
 # config.json
 # {
 #   "base_url": "http://localhost:8002",
 #   "api_key": "your-api-key",
-#   "timeout": 7200
+#   "timeout": 3600
 # }
 
 client = SynthgenClient(config_file="config.json")
 ```
+
+The configuration is loaded in the following order of precedence:
+1. Direct parameters passed to the constructor
+2. Environment variables
+3. Configuration file values
+
+This allows for flexible configuration management across different environments.
 
 ## Batch Processing
 
@@ -146,6 +155,51 @@ results = client.monitor_batch(batch_id=batch_id)
 
 # Or submit and monitor in one step
 results = client.monitor_batch(tasks=tasks)
+```
+
+## Performance Optimization Options
+
+Two key parameters optimize task execution:
+
+```python
+Task(
+    # Other parameters...
+    use_cache=True,     # Use cached results when available (default: True)
+    track_progress=True # Enable detailed progress tracking (default: True)
+)
+```
+
+### Caching (`use_cache`)
+
+Controls whether to use previously cached results:
+
+- **True**: Reuses results for identical tasks, reducing API calls and costs
+- **False**: Always executes fresh requests, ensuring up-to-date responses
+
+```python
+# Check if results came from cache
+if task_result.cached:
+    print("Retrieved from cache")
+```
+
+### Progress Tracking (`track_progress`)
+
+Controls the level of execution monitoring:
+
+- **True**: Provides detailed metrics (tokens, duration, status updates)
+- **False**: Minimal tracking for improved performance
+
+### Usage Examples
+
+```python
+# Optimize for speed with caching
+task_cached = Task(custom_id="cached", use_cache=True, track_progress=False, ...)
+
+# Ensure fresh results with metrics
+task_fresh = Task(custom_id="fresh", use_cache=False, track_progress=True, ...)
+
+# Mixed batch processing
+results = client.monitor_batch(tasks=[task_cached, task_fresh])
 ```
 
 ## Health Checks
@@ -221,20 +275,7 @@ except APIError as e:
         print(f"Response: {e.response.text}")
 ```
 
-## Models
-
-The library uses Pydantic models for type validation and serialization:
-
-- `Task`: Represents a task to be submitted
-- `TaskResponse`: Contains task results and metadata
-- `Batch`: Contains batch status and statistics
-- `BatchList`: Paginated list of batches
-- `HealthResponse`: System health information
-- `TaskStatus`: Enum of possible task states (PENDING, PROCESSING, COMPLETED, FAILED)
-
-## Advanced Usage
-
-### Monitoring Existing Batches
+## Monitoring Existing Batches
 
 ```python
 # Monitor an existing batch
@@ -250,6 +291,45 @@ results = client.monitor_batch(
 ```python
 # Create batch with custom chunk size for large batches
 response = client.create_batch(tasks, chunk_size=500)
+```
+
+## Token Usage Tracking and Cost Calculation
+
+The client provides detailed token usage statistics and cost calculation capabilities for batches:
+
+```python
+# Process a batch with cost tracking
+results = client.monitor_batch(
+    tasks=tasks,
+    cost_by_1m_input_token=0.01,  # Cost per million input tokens
+    cost_by_1m_output_token=0.03  # Cost per million output tokens
+)
+
+# Retrieve batch statistics
+batch = client.get_batch(batch_id)
+print(f"Input tokens: {batch.prompt_tokens:,}")
+print(f"Output tokens: {batch.completion_tokens:,}")
+print(f"Total tokens: {batch.total_tokens:,}")
+```
+
+This allows for real-time cost estimation and budget tracking when using pay-per-token LLM services.
+
+## Resilient Error Handling and Auto-Retry
+
+The client implements sophisticated error handling with automatic retries for transient network issues:
+
+```python
+# The client automatically handles retries with exponential backoff
+# Max retries and other parameters are configurable
+try:
+    result = client.get_task("task-id")
+except APIError as e:
+    if e.status_code == 404:
+        print("Task not found")
+    elif e.status_code == 401:
+        print("Authentication failed - check your API key")
+    else:
+        print(f"An error occurred: {str(e)}")
 ```
 
 ## Requirements

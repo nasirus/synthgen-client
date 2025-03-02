@@ -67,6 +67,31 @@ class SynthgenClient:
         self._client = httpx.Client(timeout=timeout, headers=self._get_headers())
         logger.debug("SynthgenClient initialized successfully")
 
+    def _load_config(self, config_file: str) -> None:
+        """Load configuration from a JSON file.
+        
+        Args:
+            config_file: Path to the configuration file
+            
+        Raises:
+            APIError: If the file cannot be read or contains invalid JSON
+        """
+        try:
+            with open(config_file, 'r') as f:
+                config = json.load(f)
+            
+            # Extract configuration values, setting instance variables
+            self.base_url = config.get('base_url')
+            self.api_key = config.get('api_key')
+            self.timeout = config.get('timeout', 3600)
+            
+            # Log successful configuration loading
+            logger.debug(f"Loaded configuration from {config_file}")
+            
+        except (json.JSONDecodeError, FileNotFoundError) as e:
+            logger.error(f"Error loading configuration from {config_file}: {str(e)}")
+            raise APIError(f"Failed to load configuration: {str(e)}")
+
     def _get_headers(self) -> Dict[str, str]:
         """Generate HTTP headers for API requests.
 

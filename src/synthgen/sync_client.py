@@ -9,6 +9,7 @@ from .models import (
     HealthResponse,
     BulkTaskResponse,
     Task,
+    TaskStatsResponse,
     TaskStatus,
     UsageStatsResponse,
     HealthStatus,
@@ -733,3 +734,13 @@ class SynthgenClient:
         except Exception as e:
             logger.error(f"Failed to fetch stats for batch {batch_id}: {str(e)}")
             raise APIError(f"Failed to fetch batch statistics: {str(e)}")
+
+    def get_task_stats(self) -> TaskStatsResponse:
+        """Get task statistics for the current batch.
+
+        Returns:
+            TaskStatsResponse object containing task statistics
+        """
+        url = "/api/v1/tasks/stats"
+        response = self._request("GET", url, headers=self._get_headers())
+        return TaskStatsResponse.model_validate(response)

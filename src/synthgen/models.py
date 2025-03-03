@@ -220,6 +220,7 @@ class TimeSeriesDataPoint(BaseModel):
         avg_duration_ms: Average task duration in milliseconds
         tokens_per_second: Processing throughput in tokens per second
     """
+
     timestamp: str
     total_tasks: int
     completed_tasks: int
@@ -247,6 +248,7 @@ class StatsSummary(BaseModel):
         tokens_per_second: Processing throughput in tokens per second
         cache_hit_rate: Ratio of cached tasks to total tasks
     """
+
     total_tasks: int
     completed_tasks: int
     failed_tasks: int
@@ -269,11 +271,13 @@ class UsageStatsResponse(BaseModel):
         time_series: List of time series data points
         summary: Aggregated statistics summary
     """
+
     time_range: str
     interval: str
     current_time: str
     time_series: List[TimeSeriesDataPoint]
     summary: StatsSummary
+
 
 class CalendarInterval(str, Enum):
     """
@@ -297,3 +301,29 @@ class CalendarInterval(str, Enum):
     QUARTER_SHORT = "1q"
     YEAR = "year"
     YEAR_SHORT = "1y"
+
+
+class TaskStatsResponse(BaseModel):
+    """
+    Response model for task statistics.
+    
+    Attributes:
+        total_tasks: Total number of tasks
+        completed_tasks: Number of successfully completed tasks
+        failed_tasks: Number of failed tasks
+        cached_tasks: Number of tasks retrieved from cache
+        processing_tasks: Number of tasks currently being processed
+        pending_tasks: Number of tasks waiting to be processed
+        total_tokens: Total token count (input + output)
+        prompt_tokens: Number of input tokens processed
+        completion_tokens: Number of output tokens generated
+    """
+    total_tasks: int
+    completed_tasks: int
+    failed_tasks: int
+    cached_tasks: int
+    processing_tasks: int
+    pending_tasks: int
+    total_tokens: int
+    prompt_tokens: int
+    completion_tokens: int

@@ -143,8 +143,10 @@ class ServiceStatus(BaseModel):
     api: HealthStatus = HealthStatus.HEALTHY
     rabbitmq: HealthStatus = HealthStatus.UNHEALTHY
     elasticsearch: HealthStatus = HealthStatus.UNHEALTHY
-    queue_consumers: int = 0
-    queue_messages: int = 0
+    task_queue_consumers: int = 0
+    task_queue_messages: int = 0
+    batch_queue_consumers: int = 0
+    batch_queue_messages: int = 0
 
 
 class HealthResponse(BaseModel):

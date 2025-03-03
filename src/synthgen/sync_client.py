@@ -11,6 +11,7 @@ from .models import (
     Task,
     TaskStatus,
     UsageStatsResponse,
+    HealthStatus,
 )
 from .exceptions import APIError
 import logging
@@ -21,6 +22,10 @@ import json
 import os
 import re
 from dotenv import load_dotenv
+from rich.console import Console
+from rich.table import Table
+from rich.panel import Panel
+from rich import box
 
 load_dotenv()
 # Configure logging at the top of the file
@@ -430,10 +435,8 @@ class SynthgenClient:
         Raises:
             ValueError: If neither tasks nor batch_id is provided
         """
-        from rich.console import Console, Group
+        from rich.console import Group
         from rich.live import Live
-        from rich.table import Table
-        from rich.panel import Panel
         from rich.progress import (
             Progress,
             SpinnerColumn,
@@ -447,45 +450,50 @@ class SynthgenClient:
 
         # 1. Health Check Display with harmonized styling
         health = self.check_health()
-        health_table = Table(show_header=True, header_style=f"bold {COLORS['primary']}")
-        health_table.add_column("Service", justify="left", style=COLORS["text"])
-        health_table.add_column("Status", justify="center")
-        health_table.add_column("Details", justify="right", style=COLORS["muted"])
+
+        # Create a single comprehensive health table
+        health_table = Table(
+            show_header=True, header_style=f"bold {COLORS['primary']}", box=box.ROUNDED
+        )
+        health_table.add_column("Component", justify="left", style=COLORS["text"])
+        health_table.add_column("Status", style=COLORS["text"])
 
         def get_status_style(status: bool) -> str:
             return COLORS["success"] if status else COLORS["error"]
 
+        def status_indicator(service_status):
+            is_healthy = service_status == HealthStatus.HEALTHY
+            color = get_status_style(is_healthy)
+            status_text = "Online" if is_healthy else "Offline"
+            return f"[{color}]●[/] {status_text}"
+
+        # API status
+        health_table.add_row("[bold]API[/]", status_indicator(health.services.api))
+
+        # Elasticsearch status
         health_table.add_row(
-            "API",
-            (
-                f"[{get_status_style(health.services.api.value)}]●[/] Online"
-                if health.services.api.value
-                else f"[{COLORS['error']}]●[/] Offline"
-            ),
-            "",
+            "[bold]Elasticsearch[/]", status_indicator(health.services.elasticsearch)
         )
+
+        # RabbitMQ status with queue information
+        rabbitmq_status = status_indicator(health.services.rabbitmq)
+        task_queue_info = f"Task Queue: {health.services.task_queue_consumers} consumers, {health.services.task_queue_messages} msgs"
+        batch_queue_info = f"Batch Queue: {health.services.batch_queue_consumers} consumers, {health.services.batch_queue_messages} msgs"
+
         health_table.add_row(
-            "RabbitMQ",
-            (
-                f"[{get_status_style(health.services.rabbitmq.value)}]●[/] Online"
-                if health.services.rabbitmq.value
-                else f"[{COLORS['error']}]●[/] Offline"
-            ),
-            f"[{COLORS['muted']}]Messages: {health.services.queue_messages}[/]",
+            "[bold]RabbitMQ[/]",
+            f"{rabbitmq_status}\n[{COLORS['muted']}]{task_queue_info}\n{batch_queue_info}[/]",
         )
-        health_table.add_row(
-            "Elasticsearch",
-            (
-                f"[{get_status_style(health.services.elasticsearch.value)}]●[/] Online"
-                if health.services.elasticsearch.value
-                else f"[{COLORS['error']}]●[/] Offline"
-            ),
-            "",
+
+        # Overall system status
+        system_status = (
+            "Healthy" if health.status == HealthStatus.HEALTHY else "Unhealthy"
         )
+        system_status_color = get_status_style(health.status == HealthStatus.HEALTHY)
         health_table.add_row(
-            "Queue Consumers",
-            "",
-            f"[{COLORS['muted']}]Active: {health.services.queue_consumers}[/]",
+            "[bold]System Status[/]",
+            f"[{system_status_color}]{system_status}[/]"
+            + (f"\n[{COLORS['error']}]{health.error}[/]" if health.error else ""),
         )
 
         console.print(

@@ -622,7 +622,7 @@ class SynthgenClient:
         return tasks_data
 
     def get_batch_tasks(
-        self, batch_id: str, task_status: TaskStatus = TaskStatus.COMPLETED
+        self, batch_id: str, task_status: TaskStatus = None
     ) -> List[TaskResponse]:
         """Stream tasks for a given batch while displaying download progress.
 
@@ -645,8 +645,8 @@ class SynthgenClient:
         batch = self.get_batch(batch_id)
         total_tasks = getattr(batch, "total_tasks", None)
 
-        params = {"task_status": task_status.value}
-        url = f"{self.base_url}/api/v1/batches/{batch_id}/tasks"
+        params = {"task_status": task_status.value} if task_status else {}
+        url = f"{self.base_url}/api/v1/batches/{batch_id}/tasks/export"
 
         tasks_accumulated: List[TaskResponse] = []
 

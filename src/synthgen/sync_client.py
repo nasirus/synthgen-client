@@ -95,58 +95,32 @@ class SynthgenClient:
 
     def __init__(
         self,
-        base_url: str = None,
+        base_url: str = "http://localhost",
+        port: str = "8000",
         api_key: Optional[str] = None,
         timeout: int = 3600,
-        config_file: str = None,
     ):
         """Initialize the client with configuration from multiple sources.
 
         Args:
-            base_url: The base URL of the Synthgen API. Defaults to environment variable SYNTHGEN_BASE_URL or "http://localhost:8002".
-            api_key: The API key for authentication. Defaults to environment variable SYNTHGEN_API_KEY.
+            base_url: The base URL of the Synthgen API. Defaults to environment variable API_URL or "http://localhost".
+            port: The port of the Synthgen API. Defaults to environment variable API_PORT or "8000".
+            api_key: The API key for authentication. Defaults to environment variable API_SECRET_KEY.
             timeout: Request timeout in seconds. Defaults to 3600.
-            config_file: Path to a configuration file. If provided, settings will be loaded from this file.
         """
-        # Load from config file if provided
-        if config_file:
-            self._load_config(config_file)
 
         # Environment variables take precedence over config file
-        self.base_url = base_url or os.environ.get(
-            "SYNTHGEN_BASE_URL", "http://localhost:8002"
-        )
+        self.base_url = f"{base_url}:{port}"
         self.api_key = api_key or os.environ.get("API_SECRET_KEY")
+        
+        # Validate that API key is provided
+        if not self.api_key:
+            raise ValueError("API key is required. Please provide 'api_key' parameter or set API_SECRET_KEY environment variable.")
 
         logger.debug(f"Initializing SynthgenClient with base_url: {self.base_url}")
         self.timeout = timeout
         self._client = httpx.Client(timeout=timeout, headers=self._get_headers())
         logger.debug("SynthgenClient initialized successfully")
-
-    def _load_config(self, config_file: str) -> None:
-        """Load configuration from a JSON file.
-
-        Args:
-            config_file: Path to the configuration file
-
-        Raises:
-            APIError: If the file cannot be read or contains invalid JSON
-        """
-        try:
-            with open(config_file, "r") as f:
-                config = json.load(f)
-
-            # Extract configuration values, setting instance variables
-            self.base_url = config.get("base_url")
-            self.api_key = config.get("api_key")
-            self.timeout = config.get("timeout", 3600)
-
-            # Log successful configuration loading
-            logger.debug(f"Loaded configuration from {config_file}")
-
-        except (json.JSONDecodeError, FileNotFoundError) as e:
-            logger.error(f"Error loading configuration from {config_file}: {str(e)}")
-            raise APIError(f"Failed to load configuration: {str(e)}")
 
     def _get_headers(self) -> Dict[str, str]:
         """Generate HTTP headers for API requests.

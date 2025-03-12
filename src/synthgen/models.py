@@ -42,6 +42,7 @@ class TaskResponse(BaseModel):
 
     message_id: str
     batch_id: Optional[str] = None
+    custom_id: Optional[str] = None
     status: TaskStatus
     body: Optional[dict] = None
     cached: bool = False
@@ -180,11 +181,11 @@ class Task(BaseModel):
         track_progress: Whether to track and report task progress
     """
 
-    custom_id: str
     url: str
-    method: str = "POST"
-    api_key: Optional[str] = None
     body: dict
+    api_key: Optional[str] = None    
+    custom_id: Optional[str] = None
+    method: str = "POST"
     dataset: Optional[str] = None
     source: Optional[dict] = None
     use_cache: bool = True

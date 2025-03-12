@@ -227,7 +227,7 @@ class SynthgenClient:
         """
         self._request("DELETE", f"/api/v1/tasks/{message_id}")
 
-    def get_batch(self, batch_id: str) -> Batch:
+    def get_batch(self, batch_id: str) -> Optional[Batch]:
         """Get batch status and metadata.
 
         Args:
@@ -237,6 +237,8 @@ class SynthgenClient:
             Batch object containing batch details
         """
         response = self._request("GET", f"/api/v1/batches/{batch_id}")
+        if response is None:
+            return None
         return Batch.model_validate(response)
 
     def get_batches(self) -> BatchList:
@@ -519,46 +521,59 @@ class SynthgenClient:
                 last_update = current_time
             batch = cached_batch
 
-            # Create status table with consistent styling
+            # Handle case where batch is None
+            if batch is None:
+                # Create default metrics
+                metrics = [
+                    ("Completed", f"[{COLORS['success']}]0[/]"),
+                    ("Pending", f"[{COLORS['warning']}]0[/]"),
+                    ("Processing", f"[{COLORS['primary']}]0[/]"),
+                    ("Failed", f"[{COLORS['error']}]0[/]"),
+                    ("Cached", f"[{COLORS['muted']}]0[/]"),
+                    ("Total", f"[bold {COLORS['text']}]{total_tasks:,}[/]"),
+                    ("Duration", "00:00:00"),
+                    ("Prompt Tokens", "0"),
+                    ("Completion Tokens", "0"),
+                    ("Total Tokens", "[bold]0[/]"),
+                    ("Input Cost", "$0.0000"),
+                    ("Output Cost", "$0.0000"),
+                    ("Total Cost", "[bold]$0.0000[/]"),
+                ]
+            else:
+                # Create status table with consistent styling
+                duration = getattr(batch, "duration", 0) or 0
+                hours, remainder = divmod(duration, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                duration_str = f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
+
+                total_tokens = getattr(batch, "total_tokens", 0) or 0
+                prompt_tokens = getattr(batch, "prompt_tokens", 0) or 0
+                completion_tokens = getattr(batch, "completion_tokens", 0) or 0
+
+                # Ensure we're using float values for cost calculations
+                input_cost = (float(prompt_tokens) / 1_000_000) * float(cost_by_1m_input_token)
+                output_cost = (float(completion_tokens) / 1_000_000) * float(cost_by_1m_output_token)
+                total_cost = input_cost + output_cost
+
+                metrics = [
+                    ("Completed", f"[{COLORS['success']}]{batch.completed_tasks:,}[/]"),
+                    ("Pending", f"[{COLORS['warning']}]{batch.pending_tasks:,}[/]"),
+                    ("Processing", f"[{COLORS['primary']}]{batch.processing_tasks:,}[/]"),
+                    ("Failed", f"[{COLORS['error']}]{batch.failed_tasks:,}[/]"),
+                    ("Cached", f"[{COLORS['muted']}]{batch.cached_tasks:,}[/]"),
+                    ("Total", f"[bold {COLORS['text']}]{batch.total_tasks:,}[/]"),
+                    ("Duration", duration_str),
+                    ("Prompt Tokens", f"{prompt_tokens:,}"),
+                    ("Completion Tokens", f"{completion_tokens:,}"),
+                    ("Total Tokens", f"[bold]{total_tokens:,}[/]"),
+                    ("Input Cost", f"${input_cost:.4f}"),
+                    ("Output Cost", f"${output_cost:.4f}"),
+                    ("Total Cost", f"[bold]${total_cost:.4f}[/]"),
+                ]
+
             status_table = Table(show_header=False, box=None, padding=(0, 2))
             status_table.add_column("Metric", justify="right", style=COLORS["muted"])
             status_table.add_column("Value", justify="left", style=COLORS["text"])
-
-            # Calculate metrics
-            duration = getattr(batch, "duration", 0) or 0
-            hours, remainder = divmod(duration, 3600)
-            minutes, seconds = divmod(remainder, 60)
-            duration_str = f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
-
-            total_tokens = getattr(batch, "total_tokens", 0) or 0
-            prompt_tokens = getattr(batch, "prompt_tokens", 0) or 0
-            completion_tokens = getattr(batch, "completion_tokens", 0) or 0
-
-            # Ensure we're using float values for cost calculations
-            input_cost = (float(prompt_tokens) / 1_000_000) * float(
-                cost_by_1m_input_token
-            )
-            output_cost = (float(completion_tokens) / 1_000_000) * float(
-                cost_by_1m_output_token
-            )
-            total_cost = input_cost + output_cost
-
-            # Add rows with consistent formatting
-            metrics = [
-                ("Completed", f"[{COLORS['success']}]{batch.completed_tasks:,}[/]"),
-                ("Pending", f"[{COLORS['warning']}]{batch.pending_tasks:,}[/]"),
-                ("Processing", f"[{COLORS['primary']}]{batch.processing_tasks:,}[/]"),
-                ("Failed", f"[{COLORS['error']}]{batch.failed_tasks:,}[/]"),
-                ("Cached", f"[{COLORS['muted']}]{batch.cached_tasks:,}[/]"),
-                ("Total", f"[bold {COLORS['text']}]{batch.total_tasks:,}[/]"),
-                ("Duration", duration_str),
-                ("Prompt Tokens", f"{prompt_tokens:,}"),
-                ("Completion Tokens", f"{completion_tokens:,}"),
-                ("Total Tokens", f"[bold]{total_tokens:,}[/]"),
-                ("Input Cost", f"${input_cost:.4f}"),
-                ("Output Cost", f"${output_cost:.4f}"),
-                ("Total Cost", f"[bold]${total_cost:.4f}[/]"),
-            ]
 
             for metric, value in metrics:
                 status_table.add_row(f"{metric}:", value)
@@ -579,13 +594,16 @@ class SynthgenClient:
         ) as live:
             while True:
                 batch = self.get_batch(batch_id)
-                progress.update(progress_task, completed=batch.completed_tasks)
+                if batch is None:
+                    progress.update(progress_task, completed=0)
+                else:
+                    progress.update(progress_task, completed=batch.completed_tasks)
                 live.update(render_dashboard())
-                tasks_done = batch.completed_tasks + batch.failed_tasks
-                if tasks_done >= total_tasks or batch.batch_status in [
+                tasks_done = batch.completed_tasks + batch.failed_tasks if batch else 0
+                if tasks_done >= total_tasks or (batch and batch.batch_status in [
                     "COMPLETED",
                     "FAILED",
-                ]:
+                ]):
                     break
                 time.sleep(2)
 

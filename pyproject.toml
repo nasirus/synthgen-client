@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "synthgen-client"
-version = "0.0.5"
+version = "0.0.6"
 description = "A Python client library for the Synthetic Data Generation API"
 readme = "README.md"
 authors = [{ name = "nasirus", email = "email@example.com" }]

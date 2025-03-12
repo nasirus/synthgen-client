@@ -135,22 +135,6 @@ class SynthgenClient:
             headers["Authorization"] = f"Bearer {self.api_key}"
         return headers
 
-    def close(self):
-        """Close the underlying HTTP client to free resources."""
-        self._client.close()
-
-    def __enter__(self):
-        """Enable context manager support for the client.
-
-        Returns:
-            The client instance.
-        """
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Handle context manager exit by closing the client."""
-        self.close()
-
     def _request(self, method: str, path: str, **kwargs) -> Any:
         """Make an HTTP request to the API with robust retry logic.
 

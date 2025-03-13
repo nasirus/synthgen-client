@@ -25,13 +25,10 @@ from synthgen import SynthgenClient
 from synthgen.models import Task
 
 # Initialize the client
-client = SynthgenClient(
-    base_url="https://api.synthgen.example.com",
-    api_key="your-api-key"
-)
+client = SynthgenClient()
 
 
-# Example of a task using a local LLM provider
+# Example of a task using a local Ollama on host
 provider = "http://host.docker.internal:11434/v1/chat/completions"
 model = "qwen2.5:0.5b"
 api_key = "api_key"
@@ -85,56 +82,30 @@ The client can be configured in multiple ways:
 
 ```bash
 # Set these environment variables
-export SYNTHGEN_BASE_URL="http://localhost:8002"
-export SYNTHGEN_API_KEY="your-api-key"
+API_URL="http://localhost"
+API_PORT="8000"
+API_SECRET_KEY="sk1-1564813548"
 
 # Then initialize without parameters
-client = SynthgenClient()
+client = SynthgenClient(base_url=API_URL, port=API_PORT, api_key=API_SECRET_KEY)
 ```
-
-### Direct Parameters
-
-```python
-client = SynthgenClient(
-    base_url="http://localhost:8002",
-    api_key="your-api-key",
-    timeout=3600  # Optional request timeout in seconds
-)
-```
-
-### Configuration File
-
-You can use a JSON configuration file for easier configuration management:
-
-```python
-# config.json
-# {
-#   "base_url": "http://localhost:8002",
-#   "api_key": "your-api-key",
-#   "timeout": 3600
-# }
-
-client = SynthgenClient(config_file="config.json")
-```
-
-The configuration is loaded in the following order of precedence:
-1. Direct parameters passed to the constructor
-2. Environment variables
-3. Configuration file values
-
-This allows for flexible configuration management across different environments.
 
 ## Batch Processing
 
-The library provides powerful batch processing capabilities:
+The library provides batch processing capabilities:
 
 ```python
+# OpenAI
+provider_url = "https://api.openai.com/v1/chat/completions"
+model = "gpt-4o-mini"
+api_key = os.getenv('OPENAI_API_KEY')
+
 # Create a batch of tasks
 tasks = [
     Task(
         custom_id="task-001",
         method="POST",
-        url=provider,
+        url=provider_url,
         api_key=api_key,
         body={
             "model": model,
@@ -278,6 +249,7 @@ print(f"Overall throughput: {summary.tokens_per_second} tokens/sec")
 ```
 
 The `interval` parameter supports various Elasticsearch calendar intervals:
+
 - `MINUTE_SHORT` / `"1m"`: One minute interval
 - `HOUR_SHORT` / `"1h"`: One hour interval
 - `DAY_SHORT` / `"1d"`: One day interval
@@ -285,6 +257,7 @@ The `interval` parameter supports various Elasticsearch calendar intervals:
 - `MONTH_SHORT` / `"1M"`: One month interval
 
 This data is useful for:
+
 - Monitoring system performance trends over time
 - Analyzing throughput patterns
 - Identifying processing bottlenecks
